@@ -1,83 +1,135 @@
-# PROMPTS.md — LYTA
+LYTA Development Record
 
-This file documents the prompt design and AI-assisted development process for LYTA.
+This document records how AI assistance was used during development of LYTA.
 
----
+AI tools were used for structured reasoning, refactoring guidance, and architectural iteration. All code was implemented, tested, and validated manually.
 
-## 1. System Prompt (Production Prompt)
+⸻
 
-The system prompt is embedded during Durable Object initialization to enforce:
+1. Core System Prompt Design
 
-- Session-aware memory
-- Explicit limitation handling
-- No hallucinated real-time data
-- Controlled assistant behavior
+Objective
 
-System Prompt:
+Create a constrained assistant that:
+	•	Maintains session context
+	•	Avoids hallucinated real-time data
+	•	Provides technically accurate responses
+	•	Operates within edge runtime constraints
 
-"You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI.
+Final System Prompt
+
+You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI.
 You maintain session memory within a Durable Object.
 You provide concise, technically accurate responses.
 You do NOT have live internet access.
 If asked about real-time data (weather, stock prices, breaking news, live events),
-you must clearly state that you do not have live data access and suggest checking a reliable source."
+you must clearly state that you do not have live data access and suggest checking a reliable source.
 
----
+Design Rationale
+	•	Explicitly stating “edge-deployed” frames constraints.
+	•	Real-time denial reduces hallucination risk.
+	•	Conciseness reduces token cost.
+	•	Durable Object mention aligns model behavior with architecture.
 
-## 2. Memory Strategy
+⸻
 
-Conversation history is stored in Durable Object storage.
+2. Memory Injection Pattern
 
-Prompt injection pattern:
+Prompt construction follows:
 
 messages = [
-  system,
-  ...previous conversation history,
-  current user message
+  system_prompt,
+  ...bounded_history,
+  current_user_message
 ]
 
-Memory window is capped to prevent unbounded growth.
+AI assistance was used to refine:
+	•	History bounding logic
+	•	Preservation of system prompt during trimming
+	•	Order-sensitive message reconstruction
 
----
+The final implementation enforces a 20-message window to control token growth.
 
-## 3. Lightweight Profile Memory
+⸻
 
-Regex-based extraction is used to capture simple personal data such as:
+3. Controlled Profile Extraction
 
-- "my name is X"
+Instead of relying entirely on the LLM to remember personal data, a lightweight regex extraction strategy was implemented:
 
-This value is stored separately as `profile_name` and returned in API response.
+Pattern:
 
-This demonstrates controlled state extraction rather than relying entirely on LLM recall.
+/my name is\s+([A-Za-z][A-Za-z\-']{1,30})/i
 
----
+Rationale:
+	•	Demonstrates server-side state control
+	•	Reduces unnecessary LLM token usage
+	•	Prevents reliance on probabilistic recall
 
-## 4. Rate Limiting Strategy
+AI assistance was used to evaluate extraction patterns and edge cases.
 
-Per-session rate limiting:
-- 30 requests per 10 minutes
-- Stored in Durable Object state
-- Enforced before LLM execution
+⸻
 
----
+4. Rate Limiting Enforcement
 
-## 5. AI-Assisted Development
+Prompt to AI (development phase):
 
-During development, AI assistance was used for:
-- Durable Object architecture refinement
-- Prompt structuring
-- Error handling patterns
-- Edge-safe memory trimming strategy
+“Design a per-session rate limit that prevents inference abuse while remaining edge-compatible.”
 
-All logic was implemented and tested manually.
+Final implementation:
+	•	30 requests per 10 minutes
+	•	Stored in Durable Object state
+	•	Enforced before model invocation
 
----
+This ensures inference cost control and protects edge resources.
 
-## 6. Design Goals
+⸻
 
-This project was designed to demonstrate:
+5. Streaming Architecture
 
-- Edge-native AI architecture
-- Stateful coordination using Durable Objects
-- Safe LLM usage with explicit constraints
-- Production-minded engineering practices
+AI assistance was used to refine:
+	•	SSE implementation pattern
+	•	Separation of /chat and /chat/stream
+	•	Maintaining architectural consistency between normal and streaming modes
+
+Final design ensures:
+	•	Stateless router
+	•	Stateful execution
+	•	Streamed inference without breaking session isolation
+
+⸻
+
+6. Edge Architecture Reasoning Prompts
+
+Examples of development prompts used:
+	•	“Explain why Durable Objects are more appropriate than KV for session memory.”
+	•	“Design a bounded memory strategy that preserves system prompt integrity.”
+	•	“Refactor Worker routing to separate ingress from state management.”
+	•	“Identify potential race conditions in edge session handling.”
+	•	“Improve consistency between streaming and non-streaming endpoints.”
+
+These prompts were used to evaluate architectural decisions, not to auto-generate full application code.
+
+⸻
+
+7. Development Philosophy
+
+AI tools were used as:
+	•	A structured reasoning assistant
+	•	A refactoring reviewer
+	•	An architecture validator
+
+All system design decisions, routing logic, and state management patterns were implemented and tested manually.
+
+The goal was not to generate a chat app, but to design a production-aware, edge-native AI system with controlled state and cost boundaries.
+
+⸻
+
+Summary
+
+AI assistance was leveraged intentionally for:
+	•	Architecture refinement
+	•	Prompt safety constraints
+	•	Edge-consistent design validation
+	•	Memory and rate-limit modeling
+
+Final implementation reflects deliberate engineering decisions rather than template-based generation.
