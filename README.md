@@ -6,7 +6,6 @@ It demonstrates how to architect stateful LLM systems at the edge — not just c
 
 Built to showcase architectural maturity, consistency guarantees, and production-grade LLM system design.
 
-⸻
 
 🌐 Live Demo
 
@@ -22,7 +21,6 @@ You can:
 	•	Toggle dark mode
 	•	Observe deterministic identity persistence
 
-⸻
 
 🏗 Architecture Overview
 
@@ -42,7 +40,6 @@ This separation ensures:
 	•	Clean routing/state boundaries
 	•	Explicit session scoping
 
-⸻
 
 Strongly Consistent Session Memory (Durable Objects)
 
@@ -60,7 +57,6 @@ Stored state includes:
 
 Memory is bounded to prevent uncontrolled growth.
 
-⸻
 
 Deterministic Identity Injection
 
@@ -76,7 +72,6 @@ This prevents:
 
 This is intentional engineering — not accidental model behavior.
 
-⸻
 
 Streaming Architecture
 
@@ -102,7 +97,6 @@ Rate Limiting (Per Session)
 
 This prevents abuse and cost amplification.
 
-⸻
 
 📡 API Reference
 
@@ -125,19 +119,16 @@ Response
 }
 
 
-⸻
 
 POST /chat/stream
 
 Streams response via Server-Sent Events.
 
-⸻
 
 POST /reset
 
 Clears session memory for the given session.
 
-⸻
 
 GET /stats?sessionId=...
 
@@ -146,7 +137,6 @@ Returns:
 	•	Stored identity
 	•	Rate limit state
 
-⸻
 
 🛠 Run Locally
 
@@ -167,7 +157,6 @@ Then open:
 http://localhost:8787
 
 
-⸻
 
 🧠 Prompt Strategy
 
@@ -179,7 +168,6 @@ The system prompt enforces:
 
 The model is constrained deliberately to prevent fabricated “live” claims.
 
-⸻
 
 📈 Design Philosophy
 
@@ -193,7 +181,6 @@ LYTA demonstrates:
 
 It is intentionally engineered beyond a minimal LLM demo.
 
-⸻
 
 🔮 Future Improvements
 	•	Vector-based long-term memory (Cloudflare Vectorize)
@@ -202,7 +189,6 @@ It is intentionally engineered beyond a minimal LLM demo.
 	•	Analytics integration
 	•	Cost tracking per session
 
-⸻
 
 👤 Author
 
