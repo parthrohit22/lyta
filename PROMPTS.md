@@ -64,7 +64,6 @@ By injecting identity into the system message:
 
 This is intentional engineering, not accidental behavior.
 
-
 3. Conversation Memory Strategy
 
 Conversation storage:
