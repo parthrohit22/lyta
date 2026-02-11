@@ -1,103 +1,134 @@
-LYTA — Edge-Native Stateful AI on Cloudflare Workers
+LYTA - Edge-Native Stateful AI on Cloudflare Workers
 
-LYTA is a production-oriented, edge-deployed AI assistant built on Cloudflare Workers.
+LYTA is a production-oriented, edge-deployed AI assistant built entirely on Cloudflare Workers.
 
-# It demonstrates how to architect stateful LLM applications at the edge using:
+It demonstrates how to architect stateful LLM systems at the edge, not just call an API.
+
+Built with:
 	•	Workers AI (Llama 3)
 	•	Durable Objects (strongly consistent session memory)
-	•	Streaming responses (SSE)
+	•	Server-Sent Events streaming
 	•	Per-session rate limiting
 	•	Deterministic identity injection
 	•	Bounded memory windowing
 	•	Edge-safe system prompt constraints
 
-This project was built to demonstrate engineering maturity in designing LLM systems, not just invoking an API.
+This project focuses on architectural correctness, consistency, and production thinking.
 
 ⸻
 
-## 🚀 Architecture Overview
+🌐 Live Demo
 
-# Edge Entry (Stateless Router)
+Production URL
+https://cf-ai-lyta.parthrohit-dev.workers.dev
 
-# The main Worker handles:
+Open the link in a browser.
+
+No setup required.
+
+You can:git 
+	•	Chat with streaming responses
+	•	Use Enter to send messages
+	•	Reset session memory
+	•	Toggle dark mode
+	•	Observe deterministic identity persistence
+
+⸻
+
+🚀 Architecture Overview
+
+1. Stateless Edge Router
+
+The main Worker handles:
 	•	GET /health
 	•	GET /stats
 	•	POST /chat
 	•	POST /chat/stream
 	•	POST /reset
 
-It delegates all stateful execution to a per-session Durable Object.
+It delegates all stateful logic to a per-session Durable Object.
 
-# This preserves:
-	•	Horizontal scalability at the edge
-	•	Clean separation of routing and state
+This separation ensures:
+	•	Horizontal scalability
+	•	Clean routing/state boundaries
 	•	Explicit session scoping
 
+⸻
 
-## Strongly Consistent Session Memory (Durable Objects)
+2. Strongly Consistent Session Memory (Durable Objects)
 
 Each sessionId maps to a single Durable Object instance.
 
-# Durable Objects were chosen over KV because:
+Durable Objects were chosen over KV because:
 	•	KV is eventually consistent
-	•	Chat sessions require ordered, consistent state
+	•	Chat sessions require ordered, consistent memory
 	•	Durable Objects guarantee single-threaded execution per key
 
-# Stored state includes:
+Stored state includes:
 	•	Conversation history
-	•	Extracted profile metadata (e.g. user name)
+	•	Extracted profile metadata (e.g., user name)
 	•	Rate limiting counters
 
-Memory is capped to prevent unbounded growth.
+Memory is bounded to prevent uncontrolled growth.
 
+⸻
 
-## Deterministic Identity Injection
+3. Deterministic Identity Injection
 
-# Instead of relying purely on the LLM to “remember” identity:
-	•	User identity is extracted via regex
+Instead of relying on the LLM to “remember” identity:
+	•	Identity is extracted via regex
 	•	Stored separately as profile_name
 	•	Injected into the system prompt on every request
 
-This prevents identity drift and hallucinated corrections.
+This prevents:
+	•	Identity drift
+	•	Hallucinated corrections
+	•	Session inconsistency
 
-This is intentional engineering, not accidental memory.
+This is intentional engineering — not accidental memory behavior.
 
-## Streaming Architecture
+⸻
 
-# /chat/stream uses:
+4. Streaming Architecture
+
+/chat/stream uses:
 	•	Workers AI streaming
 	•	TransformStream passthrough
 	•	SSE forwarding to client
 	•	Clean assistant message reconstruction before persistence
 
-# Streaming data is:
-	•	Forwarded raw to client
+Streaming data is:
+	•	Forwarded raw to the client
 	•	Parsed safely
-	•	Persisted cleanly
+	•	Persisted only after full reconstruction
 
-No partial SSE artifacts stored.
+No partial SSE fragments are stored.
 
+⸻
 
-#  Rate Limiting (Per Session)
-	•	30 requests / 10 minutes
+5. Rate Limiting (Per Session)
+	•	30 requests per 10 minutes
 	•	Stored in Durable Object state
 	•	Enforced before model execution
 
-Protects against abuse and cost amplification.
+Prevents abuse and cost amplification.
 
+⸻
 
-## 📡 API
+📡 API Reference
 
-# POST /chat
+Even though the UI is primary, the API remains fully usable.
 
-# Request:
+POST /chat
+
+Request:
 
 {
   "sessionId": "user1",
   "message": "Hello"
 }
 
-# Response:
+Response:
 
 {
   "reply": "Hello!",
@@ -105,28 +136,32 @@ Protects against abuse and cost amplification.
 }
 
 
+⸻
 
-# POST /chat/stream
+POST /chat/stream
 
 Streams response via Server-Sent Events.
 
+⸻
 
-# POST /reset
+POST /reset
 
-Clears session memory.
+Clears session memory for the given session.
 
+⸻
 
-# GET /stats?sessionId=...
+GET /stats?sessionId=…
 
-# Returns:
+Returns:
 	•	message count
 	•	stored identity
 	•	rate limit state
 
+⸻
 
-## 🛠 Run Locally
+🛠 Run Locally
 
-# Requirements:
+Requirements:
 	•	Node 18+
 	•	Wrangler 4+
 
@@ -134,51 +169,55 @@ Install:
 
 npm install
 
-Run locally:
+Run with remote Workers AI:
 
 wrangler dev --remote
 
-## Test:
-curl -X POST http://localhost:8787/chat \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"user1","message":"Hello"}'
+Then open:
+
+http://localhost:8787
 
 
+⸻
 
-## 🧠 Prompt Strategy
+🧠 Prompt Strategy
 
-# The system prompt enforces:
+The system prompt enforces:
 	•	No real-time data hallucination
 	•	Explicit limitation acknowledgement
 	•	Technical response style
 	•	Deterministic identity consistency
 
-This prevents fabricated “live” information.
+The model is constrained deliberately to prevent fabricated “live” claims.
 
+⸻
 
-## 📈 Design Philosophy
+📈 Design Philosophy
 
-# This project demonstrates:
+LYTA demonstrates:
 	•	Edge-native AI architecture
 	•	Strongly consistent state design
 	•	Streaming-safe persistence
-	•	Deterministic memory handling
+	•	Deterministic memory injection
 	•	Abuse mitigation
 	•	Production-minded prompt control
 
 It is intentionally engineered beyond a minimal LLM demo.
 
+⸻
 
-
-## 🔮 Future Improvements
+🔮 Future Improvements
 	•	Vector-based long-term memory (Vectorize)
-	•	Structured tool calling
+	•	Structured tool/function calling
 	•	Authentication layer
 	•	Analytics integration
 	•	Cost tracking per session
 
+⸻
 
-
-# 👤 Author
+👤 Author
 
 Parth Rohit
+Cloudflare AI Internship Submission
+
+⸻
