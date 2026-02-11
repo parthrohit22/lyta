@@ -1,126 +1,100 @@
+LYTA — Edge-Native Stateful AI on Cloudflare Workers
 
-LYTA — Stateful Edge AI on Cloudflare Workers
+LYTA is a production-oriented, edge-deployed AI assistant built on Cloudflare Workers.
 
-LYTA is a stateful AI assistant built entirely on Cloudflare’s edge platform using:
-	•	Workers AI (@cf/meta/llama-3-8b-instruct)
-	•	Durable Objects for per-session state isolation
-	•	Cloudflare Workers runtime for routing
-	•	REST + Streaming (SSE) APIs
+It demonstrates how to architect stateful LLM applications at the edge using:
+	•	Workers AI (Llama 3)
+	•	Durable Objects (strongly consistent session memory)
+	•	Streaming responses (SSE)
+	•	Per-session rate limiting
+	•	Deterministic identity injection
+	•	Bounded memory windowing
+	•	Edge-safe system prompt constraints
 
-This project demonstrates how to design a production-oriented AI system at the edge with bounded memory, rate limiting, and strong session consistency.
-
-⸻
-
-🏗 Architecture Overview
-
-Client
-   ↓
-Stateless Worker Router
-   ↓
-Session-Scoped Durable Object
-   ↓
-Workers AI (LLM Inference)
-
-1️⃣ Stateless Edge Router
-
-The main Worker:
-	•	Validates and parses requests
-	•	Routes by endpoint
-	•	Delegates to a per-session Durable Object
-	•	Remains fully stateless
-
-This separates ingress logic from session state management and mirrors distributed edge design patterns.
+This project was built to demonstrate engineering maturity in designing LLM systems, not just invoking an API.
 
 ⸻
 
-2️⃣ Session State via Durable Objects
+🚀 Architecture Overview
 
-Each sessionId maps to a unique Durable Object instance.
+1. Edge Entry (Stateless Router)
 
-Durable Objects provide:
-	•	Strong per-session consistency
-	•	Single-threaded ordered execution
-	•	Isolated storage per user session
-	•	No cross-session race conditions
+The main Worker handles:
+	•	GET /health
+	•	GET /stats
+	•	POST /chat
+	•	POST /chat/stream
+	•	POST /reset
 
-Stored per session:
+It delegates all stateful execution to a per-session Durable Object.
+
+This preserves:
+	•	Horizontal scalability at the edge
+	•	Clean separation of routing and state
+	•	Explicit session scoping
+
+⸻
+
+2. Strongly Consistent Session Memory (Durable Objects)
+
+Each sessionId maps to a single Durable Object instance.
+
+Durable Objects were chosen over KV because:
+	•	KV is eventually consistent
+	•	Chat sessions require ordered, consistent state
+	•	Durable Objects guarantee single-threaded execution per key
+
+Stored state includes:
 	•	Conversation history
 	•	Extracted profile metadata (e.g. user name)
-	•	Rate limit state
+	•	Rate limiting counters
 
-Why Durable Objects (Not KV)?
-
-This system requires strongly consistent, ordered execution per session.
-Cloudflare KV is eventually consistent and would introduce race conditions under concurrent requests.
-
-Durable Objects guarantee single-instance execution per key, aligning naturally with chat session semantics.
+Memory is capped to prevent unbounded growth.
 
 ⸻
 
-3️⃣ LLM Inference (Workers AI)
+3. Deterministic Identity Injection
 
-Model used:
+Instead of relying purely on the LLM to “remember” identity:
+	•	User identity is extracted via regex
+	•	Stored separately as profile_name
+	•	Injected into the system prompt on every request
 
-@cf/meta/llama-3-8b-instruct
+This prevents identity drift and hallucinated corrections.
 
-Accessed via Workers AI binding.
-
-Two execution modes:
-
-Endpoint	Mode
-/chat	Standard completion
-/chat/stream	Server-Sent Events streaming
-
-The system prompt explicitly enforces:
-	•	No live internet claims
-	•	No fabricated real-time data
-	•	Clear capability boundaries
+This is intentional engineering, not accidental memory.
 
 ⸻
 
-🧠 Memory Strategy
+4. Streaming Architecture
 
-Conversation history:
-	•	Stored per session
-	•	Bounded to 20 messages
-	•	Old messages trimmed while preserving system prompt
+/chat/stream uses:
+	•	Workers AI streaming
+	•	TransformStream passthrough
+	•	SSE forwarding to client
+	•	Clean assistant message reconstruction before persistence
 
-This prevents:
-	•	Token explosion
-	•	Unbounded memory growth
-	•	Cost amplification
+Streaming data is:
+	•	Forwarded raw to client
+	•	Parsed safely
+	•	Persisted cleanly
 
-Stateless Alternative (Why Not?)
-
-A purely stateless design would require the client to resend full conversation history on every request:
-	•	Increases token usage
-	•	Increases cost
-	•	Exposes context to tampering
-	•	Increases payload size
-
-By anchoring memory server-side in Durable Objects, context integrity and cost control are enforced centrally.
+No partial SSE artifacts stored.
 
 ⸻
 
-🚦 Rate Limiting
-
-Per-session rate limit:
-	•	30 requests per 10 minutes
+5. Rate Limiting (Per Session)
+	•	30 requests / 10 minutes
 	•	Stored in Durable Object state
-	•	Enforced before LLM invocation
+	•	Enforced before model execution
 
-Prevents:
-	•	Abuse
-	•	Excess inference cost
-	•	Resource exhaustion
+Protects against abuse and cost amplification.
 
 ⸻
 
-📡 API Endpoints
+📡 API
 
 POST /chat
-
-Standard JSON completion.
 
 Request:
 
@@ -132,10 +106,8 @@ Request:
 Response:
 
 {
-  "reply": "...",
-  "memory": {
-    "name": "Parth"
-  }
+  "reply": "Hello!",
+  "memory": { "name": "Parth" }
 }
 
 
@@ -143,13 +115,7 @@ Response:
 
 POST /chat/stream
 
-Streaming response via Server-Sent Events:
-
-curl -N -X POST http://localhost:8787/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"user1","message":"Explain Workers."}'
-
-Returns incremental token chunks followed by [DONE].
+Streams response via Server-Sent Events.
 
 ⸻
 
@@ -159,70 +125,70 @@ Clears session memory.
 
 ⸻
 
-GET /stats?sessionId=user1
+GET /stats?sessionId=...
 
 Returns:
-	•	Message count
-	•	Profile metadata
-	•	Rate limit state
+	•	message count
+	•	stored identity
+	•	rate limit state
 
 ⸻
 
-GET /health
+🛠 Run Locally
 
-Basic service status endpoint.
-
-⸻
-
-🌍 Edge Deployment Considerations
-
-The system is intentionally designed for edge execution:
-	•	Stateless ingress layer
-	•	Strong per-session isolation
-	•	Controlled token usage
-	•	Latency-sensitive streaming support
-	•	Server-side memory enforcement
-
-Routing and state management are separated to reflect distributed edge architecture patterns.
-
-⸻
-
-▶ Running Locally
-
-Requirements
+Requirements:
 	•	Node 18+
 	•	Wrangler 4+
 
-Install
+Install:
 
 npm install
 
-Local (without remote AI)
-
-wrangler dev
-
-Remote Workers AI
+Run locally:
 
 wrangler dev --remote
 
+Test:
+
+curl -X POST http://localhost:8787/chat \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"user1","message":"Hello"}'
+
 
 ⸻
 
-🔮 Future Extensions
-	•	Vector-based semantic memory (Cloudflare Vectorize)
-	•	Tool / function calling
-	•	JWT authentication
-	•	KV-backed long-term memory tier
-	•	Observability metrics export
+🧠 Prompt Strategy
+
+The system prompt enforces:
+	•	No real-time data hallucination
+	•	Explicit limitation acknowledgement
+	•	Technical response style
+	•	Deterministic identity consistency
+
+This prevents fabricated “live” information.
 
 ⸻
 
-📁 Repository Compliance
-	•	Repository prefix: cf_ai_
-	•	Includes README.md
-	•	Includes PROMPTS.md
-	•	Original implementation
-	•	No copied submissions
+📈 Design Philosophy
+
+This project demonstrates:
+	•	Edge-native AI architecture
+	•	Strongly consistent state design
+	•	Streaming-safe persistence
+	•	Deterministic memory handling
+	•	Abuse mitigation
+	•	Production-minded prompt control
+
+It is intentionally engineered beyond a minimal LLM demo.
+
+⸻
+
+🔮 Future Improvements
+	•	Vector-based long-term memory (Vectorize)
+	•	Structured tool calling
+	•	Authentication layer
+	•	Analytics integration
+	•	Cost tracking per session
 
 ⸻
 
