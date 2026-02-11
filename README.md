@@ -1,43 +1,32 @@
-LYTA - Edge-Native Stateful AI on Cloudflare Workers
+LYTA — Edge-Native Stateful AI on Cloudflare Workers
 
 LYTA is a production-oriented, edge-deployed AI assistant built entirely on Cloudflare Workers.
 
-It demonstrates how to architect stateful LLM systems at the edge, not just call an API.
+It demonstrates how to architect stateful LLM systems at the edge — not just call an API.
 
-Built with:
-	•	Workers AI (Llama 3)
-	•	Durable Objects (strongly consistent session memory)
-	•	Server-Sent Events streaming
-	•	Per-session rate limiting
-	•	Deterministic identity injection
-	•	Bounded memory windowing
-	•	Edge-safe system prompt constraints
-
-This project focuses on architectural correctness, consistency, and production thinking.
+Built to showcase architectural maturity, consistency guarantees, and production-grade LLM system design.
 
 ⸻
 
 🌐 Live Demo
 
-Production URL
+Production URL:
 https://cf-ai-lyta.parthrohit-dev.workers.dev
 
-Open the link in a browser.
+Open the link in a browser. No setup required.
 
-No setup required.
-
-You can:git 
+You can:
 	•	Chat with streaming responses
-	•	Use Enter to send messages
+	•	Send messages using Enter
 	•	Reset session memory
 	•	Toggle dark mode
 	•	Observe deterministic identity persistence
 
 ⸻
 
-🚀 Architecture Overview
+🏗 Architecture Overview
 
-1. Stateless Edge Router
+Stateless Edge Router
 
 The main Worker handles:
 	•	GET /health
@@ -46,7 +35,7 @@ The main Worker handles:
 	•	POST /chat/stream
 	•	POST /reset
 
-It delegates all stateful logic to a per-session Durable Object.
+All stateful execution is delegated to a per-session Durable Object.
 
 This separation ensures:
 	•	Horizontal scalability
@@ -55,7 +44,7 @@ This separation ensures:
 
 ⸻
 
-2. Strongly Consistent Session Memory (Durable Objects)
+Strongly Consistent Session Memory (Durable Objects)
 
 Each sessionId maps to a single Durable Object instance.
 
@@ -73,7 +62,7 @@ Memory is bounded to prevent uncontrolled growth.
 
 ⸻
 
-3. Deterministic Identity Injection
+Deterministic Identity Injection
 
 Instead of relying on the LLM to “remember” identity:
 	•	Identity is extracted via regex
@@ -85,16 +74,16 @@ This prevents:
 	•	Hallucinated corrections
 	•	Session inconsistency
 
-This is intentional engineering — not accidental memory behavior.
+This is intentional engineering — not accidental model behavior.
 
 ⸻
 
-4. Streaming Architecture
+Streaming Architecture
 
 /chat/stream uses:
 	•	Workers AI streaming
 	•	TransformStream passthrough
-	•	SSE forwarding to client
+	•	Server-Sent Events (SSE)
 	•	Clean assistant message reconstruction before persistence
 
 Streaming data is:
@@ -106,29 +95,29 @@ No partial SSE fragments are stored.
 
 ⸻
 
-5. Rate Limiting (Per Session)
+Rate Limiting (Per Session)
 	•	30 requests per 10 minutes
 	•	Stored in Durable Object state
 	•	Enforced before model execution
 
-Prevents abuse and cost amplification.
+This prevents abuse and cost amplification.
 
 ⸻
 
 📡 API Reference
 
-Even though the UI is primary, the API remains fully usable.
+Although a browser UI is provided, the API is fully usable.
 
 POST /chat
 
-Request:
+Request
 
 {
   "sessionId": "user1",
   "message": "Hello"
 }
 
-Response:
+Response
 
 {
   "reply": "Hello!",
@@ -150,26 +139,26 @@ Clears session memory for the given session.
 
 ⸻
 
-GET /stats?sessionId=…
+GET /stats?sessionId=...
 
 Returns:
-	•	message count
-	•	stored identity
-	•	rate limit state
+	•	Message count
+	•	Stored identity
+	•	Rate limit state
 
 ⸻
 
 🛠 Run Locally
 
-Requirements:
+Requirements
 	•	Node 18+
 	•	Wrangler 4+
 
-Install:
+Install
 
 npm install
 
-Run with remote Workers AI:
+Run with remote Workers AI
 
 wrangler dev --remote
 
@@ -207,7 +196,7 @@ It is intentionally engineered beyond a minimal LLM demo.
 ⸻
 
 🔮 Future Improvements
-	•	Vector-based long-term memory (Vectorize)
+	•	Vector-based long-term memory (Cloudflare Vectorize)
 	•	Structured tool/function calling
 	•	Authentication layer
 	•	Analytics integration
@@ -218,6 +207,5 @@ It is intentionally engineered beyond a minimal LLM demo.
 👤 Author
 
 Parth Rohit
-Cloudflare AI Internship Submission
+Software Engineer
 
-⸻
