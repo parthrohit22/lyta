@@ -1,53 +1,115 @@
-# LYTA — Edge AI Chat on Cloudflare Workers
+LYTA — Stateful Edge AI on Cloudflare Workers
 
-LYTA is a stateful, edge-deployed AI assistant built on Cloudflare Workers using:
+LYTA is a stateful AI assistant built entirely on Cloudflare’s edge platform using:
+	•	Workers AI (@cf/meta/llama-3-8b-instruct)
+	•	Durable Objects for per-session state
+	•	Workers runtime for routing
+	•	REST + Streaming (SSE) APIs
 
-- Workers AI (Llama 3)
-- Durable Objects (session memory)
-- Workers runtime
-- REST chat API
-- Optional browser UI (Pages-compatible)
+This project demonstrates production-oriented AI system design at the edge with bounded memory, rate limiting, and session isolation.
 
-This project demonstrates production-oriented design patterns for AI systems at the edge.
+⸻
 
----
+🏗 Architecture Overview
 
-## Architecture Overview
+Client
+   ↓
+Stateless Worker Router
+   ↓
+Session-Scoped Durable Object
+   ↓
+Workers AI (LLM Inference)
 
-LYTA includes:
+1️⃣ Edge Entry (Worker)
 
-### 1. LLM
-- Model: `@cf/meta/llama-3-8b-instruct`
-- Accessed via Workers AI binding
-- Structured system prompt enforcing runtime constraints
+The main Worker:
+	•	Validates requests
+	•	Routes by endpoint
+	•	Delegates to per-session Durable Object
+	•	Remains stateless
 
-### 2. Memory (Stateful Sessions)
-- Durable Objects per sessionId
-- Stores:
-  - Conversation history
-  - Extracted profile metadata (e.g. name)
-- Memory bounded to avoid unbounded growth
+This separation keeps ingress logic isolated from session state.
 
-### 3. Coordination
-- Main Worker routes `/chat`
-- Delegates to per-session Durable Object
-- Stateless edge entry + stateful execution model
+⸻
 
-### 4. Safety Constraints
+2️⃣ Session State (Durable Objects)
+
+Each sessionId maps to a unique Durable Object instance.
+
+Durable Objects provide:
+	•	Strong per-session consistency
+	•	Ordered execution
+	•	Isolated storage per user session
+
+Stored per session:
+	•	Conversation history
+	•	Extracted profile metadata (e.g. name)
+	•	Rate limit counters
+
+This prevents cross-session contamination and race conditions.
+
+⸻
+
+3️⃣ LLM Inference
+
+Model:
+
+@cf/meta/llama-3-8b-instruct
+
+Accessed via Workers AI binding.
+
+Two execution modes:
+
+Endpoint	Mode
+/chat	Standard completion
+/chat/stream	Server-Sent Events streaming
+
 System prompt enforces:
-- No live internet claims
-- No real-time data fabrication
-- Explicit limitation handling
+	•	No live internet claims
+	•	No fabricated real-time data
+	•	Explicit capability limitations
 
----
+⸻
 
-## API Endpoints
+🧠 Memory Strategy
 
-### POST /chat
+Conversation history:
+	•	Stored per session
+	•	Bounded to 20 messages
+	•	Old messages trimmed while preserving system prompt
+
+This prevents:
+	•	Token explosion
+	•	Unbounded growth
+	•	Cost amplification
+
+Lightweight personalization:
+	•	Regex extraction of user name
+	•	Stored separately from history
+	•	Returned as structured metadata
+
+⸻
+
+🚦 Rate Limiting
+
+Per-session limit:
+	•	30 requests per 10 minutes
+	•	Stored in Durable Object state
+	•	Enforced before LLM invocation
+
+Prevents:
+	•	Abuse
+	•	Excess inference cost
+	•	Resource exhaustion
+
+⸻
+
+📡 API Endpoints
+
+POST /chat
 
 Request:
 
-```json
 {
   "sessionId": "user1",
   "message": "Hello"
@@ -56,11 +118,20 @@ Request:
 Response:
 
 {
-  "reply": "AI response",
-  "memory": {
-    "name": "Parth"
-  }
+  "reply": "...",
+  "memory": { "name": "Parth" }
 }
+
+
+⸻
+
+POST /chat/stream
+
+Streaming response via SSE:
+
+curl -N -X POST http://localhost:8787/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"user1","message":"Explain Workers."}'
 
 
 ⸻
@@ -71,13 +142,31 @@ Clears session memory.
 
 ⸻
 
-GET /health
+GET /stats?sessionId=user1
 
-Returns service status.
+Returns:
+	•	Message count
+	•	Profile metadata
+	•	Rate limit state
 
 ⸻
 
-Run Locally
+GET /health
+
+Service status endpoint.
+
+⸻
+
+🧩 Design Decisions
+	•	Durable Objects chosen for strong per-session consistency.
+	•	Bounded memory window prevents token and cost blow-up.
+	•	Explicit error handling for AI failures.
+	•	Streaming support improves perceived latency.
+	•	Stateless router + stateful execution models distributed systems cleanly.
+
+⸻
+
+▶ Running Locally
 
 Requirements:
 	•	Node 18+
@@ -87,57 +176,37 @@ Install:
 
 npm install
 
-Start:
+Local:
 
 wrangler dev
 
-Test:
-
-curl -X POST http://localhost:8787/chat \
-  -H "Content-Type: application/json" \
-  -d '{"sessionId":"user1","message":"Hello"}'
-
-
-⸻
-
-Run with Remote AI (Workers AI)
+Remote AI:
 
 wrangler dev --remote
 
 
 ⸻
 
-Design Decisions
-	•	Durable Objects chosen for strong per-session consistency
-	•	Memory window capped to prevent uncontrolled growth
-	•	Explicit AI error handling
-	•	Session-level rate limiting
-	•	Profile memory extraction (lightweight personalization)
-	•	Health endpoint for observability
-
-⸻
-
-Future Improvements
+🔮 Future Extensions
 	•	Vector memory (Cloudflare Vectorize)
-	•	Streaming responses
-	•	Structured function calling
-	•	Authentication layer
-	•	KV-backed long-term memory
-	•	Analytics integration
+	•	Tool / function calling
+	•	JWT authentication
+	•	KV-backed long-term memory tier
+	•	Observability metrics export
 
 ⸻
 
-Repository Requirements
+📁 Repository Compliance
 	•	Prefixed with cf_ai_
+	•	Includes README.md
 	•	Includes PROMPTS.md
 	•	Original implementation
-	•	No copied code
 
 ⸻
 
-Author
+👤 Author
 
 Parth Rohit
 Cloudflare AI Internship Submission
 
----
+⸻
