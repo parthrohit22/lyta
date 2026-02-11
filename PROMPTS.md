@@ -36,11 +36,7 @@ Instead of relying purely on LLM memory:
 	•	my name is X
 	•	I am X
 	•	this is X
-	2.	Stored separately in Durable Object state as:
-
-profile_name
-
-
+	2.	Stored separately in Durable Object state as: profile_name
 	3.	Injected into the system prompt dynamically:
 
 const systemMessage = {
