@@ -2,7 +2,7 @@ LYTA — Edge-Native Stateful AI on Cloudflare Workers
 
 LYTA is a production-oriented, edge-deployed AI assistant built on Cloudflare Workers.
 
-It demonstrates how to architect stateful LLM applications at the edge using:
+# It demonstrates how to architect stateful LLM applications at the edge using:
 	•	Workers AI (Llama 3)
 	•	Durable Objects (strongly consistent session memory)
 	•	Streaming responses (SSE)
@@ -15,11 +15,11 @@ This project was built to demonstrate engineering maturity in designing LLM syst
 
 ⸻
 
-🚀 Architecture Overview
+## 🚀 Architecture Overview
 
-1. Edge Entry (Stateless Router)
+# Edge Entry (Stateless Router)
 
-The main Worker handles:
+# The main Worker handles:
 	•	GET /health
 	•	GET /stats
 	•	POST /chat
@@ -28,34 +28,32 @@ The main Worker handles:
 
 It delegates all stateful execution to a per-session Durable Object.
 
-This preserves:
+# This preserves:
 	•	Horizontal scalability at the edge
 	•	Clean separation of routing and state
 	•	Explicit session scoping
 
-⸻
 
-2. Strongly Consistent Session Memory (Durable Objects)
+## Strongly Consistent Session Memory (Durable Objects)
 
 Each sessionId maps to a single Durable Object instance.
 
-Durable Objects were chosen over KV because:
+# Durable Objects were chosen over KV because:
 	•	KV is eventually consistent
 	•	Chat sessions require ordered, consistent state
 	•	Durable Objects guarantee single-threaded execution per key
 
-Stored state includes:
+# Stored state includes:
 	•	Conversation history
 	•	Extracted profile metadata (e.g. user name)
 	•	Rate limiting counters
 
 Memory is capped to prevent unbounded growth.
 
-⸻
 
-3. Deterministic Identity Injection
+## Deterministic Identity Injection
 
-Instead of relying purely on the LLM to “remember” identity:
+# Instead of relying purely on the LLM to “remember” identity:
 	•	User identity is extracted via regex
 	•	Stored separately as profile_name
 	•	Injected into the system prompt on every request
@@ -64,46 +62,42 @@ This prevents identity drift and hallucinated corrections.
 
 This is intentional engineering, not accidental memory.
 
-⸻
+## Streaming Architecture
 
-4. Streaming Architecture
-
-/chat/stream uses:
+# /chat/stream uses:
 	•	Workers AI streaming
 	•	TransformStream passthrough
 	•	SSE forwarding to client
 	•	Clean assistant message reconstruction before persistence
 
-Streaming data is:
+# Streaming data is:
 	•	Forwarded raw to client
 	•	Parsed safely
 	•	Persisted cleanly
 
 No partial SSE artifacts stored.
 
-⸻
 
-5. Rate Limiting (Per Session)
+#  Rate Limiting (Per Session)
 	•	30 requests / 10 minutes
 	•	Stored in Durable Object state
 	•	Enforced before model execution
 
 Protects against abuse and cost amplification.
 
-⸻
 
-📡 API
+## 📡 API
 
-POST /chat
+# POST /chat
 
-Request:
+# Request:
 
 {
   "sessionId": "user1",
   "message": "Hello"
 }
 
-Response:
+# Response:
 
 {
   "reply": "Hello!",
@@ -111,32 +105,28 @@ Response:
 }
 
 
-⸻
 
-POST /chat/stream
+# POST /chat/stream
 
 Streams response via Server-Sent Events.
 
-⸻
 
-POST /reset
+# POST /reset
 
 Clears session memory.
 
-⸻
 
-GET /stats?sessionId=...
+# GET /stats?sessionId=...
 
-Returns:
+# Returns:
 	•	message count
 	•	stored identity
 	•	rate limit state
 
-⸻
 
-🛠 Run Locally
+## 🛠 Run Locally
 
-Requirements:
+# Requirements:
 	•	Node 18+
 	•	Wrangler 4+
 
@@ -148,18 +138,16 @@ Run locally:
 
 wrangler dev --remote
 
-Test:
-
+## Test:
 curl -X POST http://localhost:8787/chat \
   -H "Content-Type: application/json" \
   -d '{"sessionId":"user1","message":"Hello"}'
 
 
-⸻
 
-🧠 Prompt Strategy
+## 🧠 Prompt Strategy
 
-The system prompt enforces:
+# The system prompt enforces:
 	•	No real-time data hallucination
 	•	Explicit limitation acknowledgement
 	•	Technical response style
@@ -167,11 +155,10 @@ The system prompt enforces:
 
 This prevents fabricated “live” information.
 
-⸻
 
-📈 Design Philosophy
+## 📈 Design Philosophy
 
-This project demonstrates:
+# This project demonstrates:
 	•	Edge-native AI architecture
 	•	Strongly consistent state design
 	•	Streaming-safe persistence
@@ -181,20 +168,17 @@ This project demonstrates:
 
 It is intentionally engineered beyond a minimal LLM demo.
 
-⸻
 
-🔮 Future Improvements
+
+## 🔮 Future Improvements
 	•	Vector-based long-term memory (Vectorize)
 	•	Structured tool calling
 	•	Authentication layer
 	•	Analytics integration
 	•	Cost tracking per session
 
-⸻
 
-👤 Author
+
+# 👤 Author
 
 Parth Rohit
-Cloudflare AI Internship Submission
-
-⸻
