@@ -1,81 +1,172 @@
-PROMPTS — LYTA
+LYTA Prompt & AI Architecture Design
 
-This document outlines the prompt design and AI-assisted development strategy used in LYTA.
+This document explains the prompt design, memory strategy, and AI-assisted development decisions behind LYTA.
+
+This is not a generic prompt file — it documents deliberate architectural reasoning.
 
 ⸻
 
-1. System Prompt Philosophy
+1. Core System Prompt
 
-The system prompt enforces strict behavioral constraints:
-	•	No live internet claims
-	•	No fabricated real-time data
-	•	Concise technical responses
-	•	Deterministic identity consistency
-	•	Session-aware memory
+LYTA uses a structured system prompt injected on every request.
 
-Core Base Prompt:
-
-“You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI.
+You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI.
 You maintain structured session memory.
 You provide concise, technically accurate responses.
 You do NOT have live internet access.
 If asked about real-time data (weather, stock prices, breaking news, live events),
-you must clearly state that you do not have live access.”
+you must clearly state that you do not have live access.
+
+Design Goals
+
+The system prompt enforces:
+	•	Explicit limitation handling
+	•	No real-time hallucinations
+	•	Technical tone
+	•	Deterministic behavior
+	•	Edge-safe constraints
+
+This prevents:
+	•	Fabricated live data
+	•	Inconsistent assistant personality
+	•	Identity drift across turns
 
 ⸻
 
-2. Deterministic Memory Injection
+2. Deterministic Identity Injection
 
-Identity is not left to model recall.
+Instead of relying purely on LLM memory:
+	1.	Identity is extracted via regex:
+	•	my name is X
+	•	I am X
+	•	this is X
+	2.	Stored separately in Durable Object state as:
 
-Workflow:
-	1.	Extract identity via regex
-	2.	Store in Durable Object storage
-	3.	Inject into system prompt on every request:
+profile_name
 
-“The user’s name is X. Address them consistently unless corrected.”
 
-This avoids:
-	•	Name drift
-	•	Hallucinated identity changes
-	•	Context forgetting under memory truncation
+	3.	Injected into the system prompt dynamically:
 
-⸻
+const systemMessage = {
+  role: "system",
+  content: savedName
+    ? BASE_SYSTEM_PROMPT +
+      ` The user's name is ${savedName}. Address them consistently by this name unless corrected.`
+    : BASE_SYSTEM_PROMPT,
+};
 
-3. Memory Windowing
+Why This Matters
 
-Conversation history is capped:
-	•	Prevents token explosion
-	•	Controls latency
-	•	Reduces cost amplification
-	•	Maintains predictable context size
+LLMs are probabilistic.
 
-Only the most recent N messages are preserved.
+Memory stored only in conversation history can drift.
 
-⸻
+By injecting identity into the system message:
+	•	Identity becomes deterministic.
+	•	The assistant cannot “forget” unless explicitly corrected.
+	•	No hallucinated corrections.
 
-4. Streaming Safety
-
-Streaming responses are:
-	•	Forwarded to client in raw SSE form
-	•	Parsed safely
-	•	Reconstructed into clean assistant output
-	•	Persisted only after full reconstruction
-
-No SSE protocol fragments are stored.
+This is intentional engineering, not accidental behavior.
 
 ⸻
 
-5. AI-Assisted Development
+3. Conversation Memory Strategy
 
-AI tools were used for:
-	•	Architectural refinement
-	•	Streaming parsing strategies
-	•	Durable Object coordination patterns
-	•	Prompt safety reinforcement
+Conversation storage:
 
-All code was reviewed, restructured, and tested manually.
+conversation: Array<{ role: "user" | "assistant", content: string }>
 
-The design decisions (state isolation, rate limiting, deterministic injection) were deliberate engineering choices.
+Memory windowing:
+
+const MAX_MESSAGES = 20;
+conversation = conversation.slice(-MAX_MESSAGES);
+
+Why Bound Memory?
+
+Without bounding:
+	•	Token usage grows linearly
+	•	Latency increases
+	•	Cost escalates
+	•	Model context degrades
+
+Windowing ensures:
+	•	Predictable token usage
+	•	Stable performance
+	•	Controlled cost
 
 ⸻
+
+4. Streaming Architecture Strategy
+
+Streaming uses:
+	•	Workers AI stream: true
+	•	TransformStream passthrough
+	•	Raw SSE forwarding
+	•	Safe JSON parsing
+	•	Clean reconstruction before persistence
+
+Streaming logic:
+	1.	Forward raw chunks to client
+	2.	Parse only data: lines
+	3.	Accumulate parsed.response
+	4.	Persist only reconstructed full text
+
+This prevents:
+	•	SSE artifacts in storage
+	•	Partial JSON fragments
+	•	Broken assistant messages
+
+⸻
+
+5. Rate Limiting Strategy
+
+Per-session rate limiting:
+	•	30 requests / 10 minutes
+	•	Stored inside Durable Object state
+	•	Enforced before LLM execution
+
+Reasoning:
+	•	Prevents abuse
+	•	Controls cost amplification
+	•	Ensures fairness
+	•	Demonstrates production awareness
+
+⸻
+
+6. AI-Assisted Development Transparency
+
+AI assistance was used for:
+	•	Durable Object architecture refinement
+	•	Streaming parsing strategy
+	•	Prompt hardening
+	•	Error handling patterns
+	•	Edge-safe memory windowing
+
+All final logic:
+	•	Structured manually
+	•	Tested locally and remotely
+	•	Validated for deterministic behavior
+
+No copy-paste templates were used without modification.
+
+⸻
+
+7. Prompt Design Philosophy
+
+The goal was not to:
+	•	Build a chatbot.
+	•	Build an LLM demo.
+
+The goal was to:
+	•	Demonstrate edge-native AI architecture.
+	•	Show strong consistency via Durable Objects.
+	•	Enforce deterministic memory.
+	•	Prevent hallucinated real-time data.
+	•	Implement streaming safely.
+	•	Control cost and abuse.
+
+This is a production-minded LLM system, not a toy interface.
+
+⸻
+
+T
