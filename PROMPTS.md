@@ -4,8 +4,6 @@ This document explains the prompt design, memory strategy, and AI-assisted devel
 
 This is not a generic prompt file — it documents deliberate architectural reasoning.
 
-⸻
-
 1. Core System Prompt
 
 LYTA uses a structured system prompt injected on every request.
@@ -30,8 +28,6 @@ This prevents:
 	•	Fabricated live data
 	•	Inconsistent assistant personality
 	•	Identity drift across turns
-
-⸻
 
 2. Deterministic Identity Injection
 
@@ -68,7 +64,6 @@ By injecting identity into the system message:
 
 This is intentional engineering, not accidental behavior.
 
-⸻
 
 3. Conversation Memory Strategy
 
@@ -94,7 +89,7 @@ Windowing ensures:
 	•	Stable performance
 	•	Controlled cost
 
-⸻
+
 
 4. Streaming Architecture Strategy
 
@@ -116,7 +111,6 @@ This prevents:
 	•	Partial JSON fragments
 	•	Broken assistant messages
 
-⸻
 
 5. Rate Limiting Strategy
 
@@ -131,7 +125,7 @@ Reasoning:
 	•	Ensures fairness
 	•	Demonstrates production awareness
 
-⸻
+
 
 6. AI-Assisted Development Transparency
 
@@ -149,7 +143,6 @@ All final logic:
 
 No copy-paste templates were used without modification.
 
-⸻
 
 7. Prompt Design Philosophy
 
@@ -166,7 +159,3 @@ The goal was to:
 	•	Control cost and abuse.
 
 This is a production-minded LLM system, not a toy interface.
-
-⸻
-
-T
