@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cf-ai-lyta",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-02-10",
+
+  "migrations": [
+    {
+      "new_sqlite_classes": ["Conversation"],
+      "tag": "v1"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Conversation",
+        "name": "CONVERSATION"
+      }
+    ]
+  },
+
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  "assets": {
+  "directory": "./pages"
+}, 
+  "compatibility_flags": ["nodejs_compat"]
+}

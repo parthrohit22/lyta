@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>LYTA</title>
+  <style>
+    body { font-family: Arial; max-width: 600px; margin: 40px auto; }
+    #chat { border: 1px solid #ccc; padding: 10px; height: 400px; overflow-y: auto; }
+    input { width: 80%; padding: 10px; }
+    button { padding: 10px; }
+    .user { color: blue; }
+    .assistant { color: green; }
+  </style>
+</head>
+<body>
+  <h2>LYTA — Cloudflare AI Chat</h2>
+
+  <div id="chat"></div>
+  <br>
+  <input id="message" placeholder="Type a message..." />
+  <button onclick="sendMessage()">Send</button>
+
+  <script>
+    const sessionId = crypto.randomUUID();
+    const chatDiv = document.getElementById("chat");
+
+    async function sendMessage() {
+      const input = document.getElementById("message");
+      const message = input.value;
+      if (!message) return;
+
+      appendMessage("user", message);
+      input.value = "";
+
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId, message })
+      });
+
+      const data = await res.json();
+      appendMessage("assistant", data.reply);
+    }
+
+    function appendMessage(role, text) {
+      const div = document.createElement("div");
+      div.className = role;
+      div.innerText = role.toUpperCase() + ": " + text;
+      chatDiv.appendChild(div);
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+  </script>
+</body>
+</html>
