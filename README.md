@@ -88,7 +88,6 @@ Streaming data is:
 
 No partial SSE fragments are stored.
 
-⸻
 
 Rate Limiting (Per Session)
 	•	30 requests per 10 minutes
