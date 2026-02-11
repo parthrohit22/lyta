@@ -4,22 +4,16 @@ export interface Env {
 }
 
 /**
- * Worker Router
+ * Main Worker Router
  */
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
 
-    // -------------------------
-    // HEALTH
-    // -------------------------
     if (url.pathname === "/health" && request.method === "GET") {
       return Response.json({ ok: true, service: "LYTA" });
     }
 
-    // -------------------------
-    // STATS
-    // -------------------------
     if (url.pathname === "/stats" && request.method === "GET") {
       const sessionId = url.searchParams.get("sessionId") || "default";
       const id = env.CONVERSATION.idFromName(sessionId);
@@ -27,9 +21,6 @@ export default {
       return stub.fetch("https://internal/stats");
     }
 
-    // -------------------------
-    // CHAT (normal)
-    // -------------------------
     if (url.pathname === "/chat" && request.method === "POST") {
       const body = await safeJson(request);
       if (!body?.message) {
@@ -46,9 +37,6 @@ export default {
       });
     }
 
-    // -------------------------
-    // CHAT (streaming)
-    // -------------------------
     if (url.pathname === "/chat/stream" && request.method === "POST") {
       const body = await safeJson(request);
       if (!body?.message) {
@@ -65,9 +53,6 @@ export default {
       });
     }
 
-    // -------------------------
-    // RESET
-    // -------------------------
     if (url.pathname === "/reset" && request.method === "POST") {
       const body = await safeJson(request);
       const id = env.CONVERSATION.idFromName(body?.sessionId || "default");
@@ -79,9 +64,10 @@ export default {
   },
 };
 
-// -------------------------
-// DURABLE OBJECT
-// -------------------------
+// --------------------------------------------------
+// Durable Object
+// --------------------------------------------------
+
 export class Conversation {
   state: DurableObjectState;
   env: Env;
@@ -94,140 +80,55 @@ export class Conversation {
   async fetch(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname;
 
-    // -------------------------
-    // RESET
-    // -------------------------
-    if (pathname === "/reset" && request.method === "POST") {
+    if (pathname === "/reset") {
       await this.state.storage.deleteAll();
       return Response.json({ ok: true });
     }
 
-    // -------------------------
-    // STATS
-    // -------------------------
-    if (pathname === "/stats" && request.method === "GET") {
-      const history =
-        (await this.state.storage.get<any[]>("history")) || [];
+    if (pathname === "/stats") {
+      const conversation =
+        (await this.state.storage.get<any[]>("conversation")) || [];
       const profileName =
         await this.state.storage.get<string>("profile_name");
       const rl =
         await this.state.storage.get<{ start: number; count: number }>("rl");
 
       return Response.json({
-        messageCount: history.length,
+        messageCount: conversation.length,
         profileName: profileName || null,
         rateLimit: rl || null,
       });
     }
 
-    // -------------------------
-    // CHAT (STREAM)
-    // -------------------------
-    if (pathname === "/chat/stream" && request.method === "POST") {
-      const body = await safeJson(request);
-      if (!body?.message) {
-        return new Response("Message required", { status: 400 });
-      }
-
-      await this.enforceRateLimit();
-
-      let history = await this.loadHistory();
-      history.push({ role: "user", content: body.message });
-      history = boundHistory(history);
-
-      const stream = await this.env.AI.run(
-        "@cf/meta/llama-3-8b-instruct",
-        {
-          messages: history,
-          stream: true,
-        }
-      );
-
-      return new Response(stream, {
-        headers: { "Content-Type": "text/event-stream" },
-      });
+    if (pathname === "/chat") {
+      return this.handleChat(request, false);
     }
 
-    // -------------------------
-    // CHAT (NORMAL)
-    // -------------------------
-    if (pathname === "/chat" && request.method === "POST") {
-      const body = await safeJson(request);
-      if (!body?.message) {
-        return new Response("Message required", { status: 400 });
-      }
-
-      await this.enforceRateLimit();
-
-      let history = await this.loadHistory();
-
-      // Extract profile memory
-      const nameMatch = body.message.match(
-        /my name is\s+([A-Za-z][A-Za-z\-']{1,30})/i
-      );
-      if (nameMatch) {
-        await this.state.storage.put("profile_name", nameMatch[1]);
-      }
-
-      history.push({ role: "user", content: body.message });
-      history = boundHistory(history);
-
-      let aiResponse: any;
-      try {
-        aiResponse = await this.env.AI.run(
-          "@cf/meta/llama-3-8b-instruct",
-          { messages: history }
-        );
-      } catch {
-        return Response.json(
-          { reply: "AI service error." },
-          { status: 500 }
-        );
-      }
-
-      const reply =
-        aiResponse?.response ?? "No response from model.";
-
-      history.push({ role: "assistant", content: reply });
-      await this.state.storage.put("history", history);
-
-      const savedName =
-        await this.state.storage.get<string>("profile_name");
-
-      return Response.json({
-        reply,
-        memory: savedName ? { name: savedName } : undefined,
-      });
+    if (pathname === "/chat/stream") {
+      return this.handleChat(request, true);
     }
 
     return new Response("Not Found", { status: 404 });
   }
 
-  // -------------------------
-  // HELPERS
-  // -------------------------
+  // --------------------------------------------------
+  // Core Chat Logic
+  // --------------------------------------------------
 
-  async loadHistory() {
-    let history =
-      (await this.state.storage.get<any[]>("history")) || null;
-
-    if (!history) {
-      history = [
-        {
-          role: "system",
-          content:
-            "You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI. " +
-            "You remember session context within this session. " +
-            "You do NOT have live internet or real-time data. " +
-            "If asked about real-time information, clearly state you do not have live access.",
-        },
-      ];
+  private async handleChat(
+    request: Request,
+    stream: boolean
+  ): Promise<Response> {
+    const body = await safeJson(request);
+    if (!body?.message || typeof body.message !== "string") {
+      return new Response("Message required", { status: 400 });
     }
 
-    return history;
-  }
+    const message = body.message;
 
-  async enforceRateLimit() {
+    // -------------------------
+    // RATE LIMIT
+    // -------------------------
     const now = Date.now();
     const windowMs = 10 * 60 * 1000;
     const limit = 30;
@@ -247,14 +148,162 @@ export class Conversation {
     await this.state.storage.put("rl", rl);
 
     if (rl.count > limit) {
-      throw new Error("Rate limit exceeded");
+      return Response.json(
+        { reply: "Rate limit hit. Try again in a few minutes." },
+        { status: 429 }
+      );
     }
+
+    // -------------------------
+    // LOAD CONVERSATION
+    // -------------------------
+    let conversation =
+      (await this.state.storage.get<any[]>("conversation")) || [];
+
+    // -------------------------
+    // ADD USER MESSAGE
+    // -------------------------
+    conversation.push({ role: "user", content: message });
+
+    // -------------------------
+    // EXTRACT IDENTITY
+    // -------------------------
+    const nameMatch = message.match(
+      /\b(my name is|i am|this is)\s+([A-Za-z][A-Za-z\-']{1,30})/i
+    );
+
+    if (nameMatch) {
+      await this.state.storage.put("profile_name", nameMatch[2]);
+    }
+
+    // -------------------------
+    // MEMORY BOUND (before LLM)
+    // -------------------------
+    const MAX_MESSAGES = 20;
+    if (conversation.length > MAX_MESSAGES) {
+      conversation = conversation.slice(-MAX_MESSAGES);
+    }
+
+    // -------------------------
+    // BUILD SYSTEM PROMPT
+    // -------------------------
+    const savedName =
+      await this.state.storage.get<string>("profile_name");
+
+    const BASE_SYSTEM_PROMPT =
+      "You are LYTA, an edge-deployed AI assistant running on Cloudflare Workers AI. " +
+      "You maintain structured session memory. " +
+      "You provide concise, technically accurate responses. " +
+      "You do NOT have live internet access. " +
+      "If asked about real-time data (weather, stock prices, breaking news, live events), " +
+      "you must clearly state that you do not have live access.";
+
+    const systemMessage = {
+      role: "system",
+      content: savedName
+        ? BASE_SYSTEM_PROMPT +
+          ` The user's name is ${savedName}. Address them consistently by this name unless corrected.`
+        : BASE_SYSTEM_PROMPT,
+    };
+
+    const messages = [systemMessage, ...conversation];
+
+    // -------------------------
+    // STREAMING
+    // -------------------------
+    if (stream) {
+      const aiStream = await this.env.AI.run(
+        "@cf/meta/llama-3-8b-instruct",
+        { messages, stream: true }
+      );
+
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+
+      (async () => {
+        const reader = aiStream.getReader();
+        const decoder = new TextDecoder();
+        let fullText = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          await writer.write(value);
+
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ") && !line.includes("[DONE]")) {
+              try {
+                const parsed = JSON.parse(line.replace("data: ", ""));
+                if (parsed.response) {
+                  fullText += parsed.response;
+                }
+              } catch {}
+            }
+          }
+        }
+
+        conversation.push({
+          role: "assistant",
+          content: fullText.trim(),
+        });
+
+        if (conversation.length > MAX_MESSAGES) {
+          conversation = conversation.slice(-MAX_MESSAGES);
+        }
+
+        await this.state.storage.put("conversation", conversation);
+        await writer.close();
+      })();
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      });
+    }
+
+    // -------------------------
+    // NORMAL RESPONSE
+    // -------------------------
+    let aiResponse: any;
+    try {
+      aiResponse = await this.env.AI.run(
+        "@cf/meta/llama-3-8b-instruct",
+        { messages }
+      );
+    } catch {
+      return Response.json(
+        { reply: "AI service error. Please try again." },
+        { status: 500 }
+      );
+    }
+
+    const reply =
+      aiResponse?.response ?? "No response from model.";
+
+    conversation.push({ role: "assistant", content: reply });
+
+    if (conversation.length > MAX_MESSAGES) {
+      conversation = conversation.slice(-MAX_MESSAGES);
+    }
+
+    await this.state.storage.put("conversation", conversation);
+
+    return Response.json({
+      reply,
+      memory: savedName ? { name: savedName } : undefined,
+    });
   }
 }
 
-// -------------------------
-// UTILITIES
-// -------------------------
+// --------------------------------------------------
+// Helper
+// --------------------------------------------------
 
 async function safeJson(request: Request) {
   try {
@@ -262,12 +311,4 @@ async function safeJson(request: Request) {
   } catch {
     return null;
   }
-}
-
-function boundHistory(history: any[]) {
-  const MAX_MESSAGES = 20;
-  if (history.length > MAX_MESSAGES) {
-    return [history[0], ...history.slice(-(MAX_MESSAGES - 1))];
-  }
-  return history;
 }
