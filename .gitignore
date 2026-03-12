@@ -168,3 +168,5 @@ dist
 # Env files
 .env
 .env.*
+# macOS
+.DS_Store
