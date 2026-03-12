@@ -1,15 +1,3 @@
-Good decision. It’s 3 AM engineering mode now — don’t debug UI logic half-asleep. Commit, document, and continue Friday.
-
-Below are clean minimal versions for both files.
-
-No fluff. Clear. Recruiter-friendly.
-
-⸻
-
-README.md
-
-Copy this entire file.
-
 # LYTA — Edge AI Assistant
 
 LYTA is an edge-native AI assistant built entirely on **Cloudflare Workers**.
