@@ -1,196 +1,146 @@
-LYTA — Edge-Native Stateful AI on Cloudflare Workers
+Good decision. It’s 3 AM engineering mode now — don’t debug UI logic half-asleep. Commit, document, and continue Friday.
 
-LYTA is a production-oriented, edge-deployed AI assistant built entirely on Cloudflare Workers.
+Below are clean minimal versions for both files.
 
-It demonstrates how to architect stateful LLM systems at the edge — not just call an API.
+No fluff. Clear. Recruiter-friendly.
 
-Built to showcase architectural maturity, consistency guarantees, and production-grade LLM system design.
+⸻
 
+README.md
 
-🌐 Live Demo
+Copy this entire file.
 
-Production URL:
-https://cf-ai-lyta.parthrohit-dev.workers.dev
+# LYTA — Edge AI Assistant
 
-Open the link in a browser. No setup required.
+LYTA is an edge-native AI assistant built entirely on **Cloudflare Workers**.
 
-You can:
-	•	Chat with streaming responses
-	•	Send messages using Enter
-	•	Reset session memory
-	•	Toggle dark mode
-	•	Observe deterministic identity persistence
+The project demonstrates how to design **stateful LLM systems at the edge** using:
 
+- Cloudflare Workers
+- Durable Objects
+- Workers AI
+- Streaming responses
+- Retrieval Augmented Generation (RAG)
 
-🏗 Architecture Overview
-
-Stateless Edge Router
-
-The main Worker handles:
-	•	GET /health
-	•	GET /stats
-	•	POST /chat
-	•	POST /chat/stream
-	•	POST /reset
-
-All stateful execution is delegated to a per-session Durable Object.
-
-This separation ensures:
-	•	Horizontal scalability
-	•	Clean routing/state boundaries
-	•	Explicit session scoping
+The goal is to show **AI system architecture**, not just a basic chatbot.
 
 
-Strongly Consistent Session Memory (Durable Objects)
+## Live Demo
 
-Each sessionId maps to a single Durable Object instance.
+https://lyta.parthrohit-dev.workers.dev
 
-Durable Objects were chosen over KV because:
-	•	KV is eventually consistent
-	•	Chat sessions require ordered, consistent memory
-	•	Durable Objects guarantee single-threaded execution per key
+Features:
 
-Stored state includes:
-	•	Conversation history
-	•	Extracted profile metadata (e.g., user name)
-	•	Rate limiting counters
-
-Memory is bounded to prevent uncontrolled growth.
+- streaming AI responses
+- persistent conversation sessions
+- dark mode UI
+- multiple chats
+- session memory
+- markdown + code rendering
 
 
-Deterministic Identity Injection
+## Architecture
 
-Instead of relying on the LLM to “remember” identity:
-	•	Identity is extracted via regex
-	•	Stored separately as profile_name
-	•	Injected into the system prompt on every request
+Browser UI
+│
+▼
+Cloudflare Worker (Router)
+│
+▼
+Durable Object (Session State)
+│
+▼
+Workers AI (LLM)
+│
+▼
+Embedding + Retrieval Layer
 
-This prevents:
-	•	Identity drift
-	•	Hallucinated corrections
-	•	Session inconsistency
+Responsibilities:
 
-This is intentional engineering — not accidental model behavior.
-
-
-Streaming Architecture
-
-/chat/stream uses:
-	•	Workers AI streaming
-	•	TransformStream passthrough
-	•	Server-Sent Events (SSE)
-	•	Clean assistant message reconstruction before persistence
-
-Streaming data is:
-	•	Forwarded raw to the client
-	•	Parsed safely
-	•	Persisted only after full reconstruction
-
-No partial SSE fragments are stored.
+| Layer | Purpose |
+|-----|-----|
+| Worker | HTTP routing, session handling |
+| Durable Object | strongly consistent chat memory |
+| Workers AI | LLM inference |
+| Retrieval | knowledge context injection |
 
 
-Rate Limiting (Per Session)
-	•	30 requests per 10 minutes
-	•	Stored in Durable Object state
-	•	Enforced before model execution
+## Core Features
 
-This prevents abuse and cost amplification.
+### Streaming Responses
+Token streaming using **Server-Sent Events (SSE)**.
+
+### Stateful Sessions
+Each chat session is mapped to a **Durable Object instance**.
+
+### Conversation Memory
+Short-term message history with automatic summarization.
+
+### Retrieval Augmented Generation
+User messages retrieve relevant knowledge using embeddings.
+
+### Edge Deployment
+The entire system runs on **Cloudflare’s edge network**.
 
 
-📡 API Reference
+## API
 
-Although a browser UI is provided, the API is fully usable.
-
-POST /chat
-
-Request
+### POST /chat
 
 {
-  "sessionId": "user1",
-  "message": "Hello"
+“message”: “Hello”
 }
 
 Response
 
 {
-  "reply": "Hello!",
-  "memory": { "name": "Parth" }
+“reply”: “Hello!”
 }
 
+### POST /chat/stream
+
+Returns streaming response tokens.
+
+### GET /history
+
+Returns recent conversation messages.
+
+### POST /reset
+
+Clears session memory.
 
 
-POST /chat/stream
-
-Streams response via Server-Sent Events.
-
-
-POST /reset
-
-Clears session memory for the given session.
-
-
-GET /stats?sessionId=...
-
-Returns:
-	•	Message count
-	•	Stored identity
-	•	Rate limit state
-
-
-🛠 Run Locally
+## Running Locally
 
 Requirements
-	•	Node 18+
-	•	Wrangler 4+
 
-Install
+Node 18+
+Wrangler CLI
+
+Install dependencies
 
 npm install
 
-Run with remote Workers AI
+Run development server
 
-wrangler dev --remote
+wrangler dev –remote
 
-Then open:
+Open
 
 http://localhost:8787
 
+## Technologies
+
+- Cloudflare Workers
+- Durable Objects
+- Workers AI
+- TypeScript
+- Server-Sent Events
+- Vector embeddings
 
 
-🧠 Prompt Strategy
-
-The system prompt enforces:
-	•	No real-time data hallucination
-	•	Explicit limitation acknowledgement
-	•	Technical response style
-	•	Deterministic identity consistency
-
-The model is constrained deliberately to prevent fabricated “live” claims.
-
-
-📈 Design Philosophy
-
-LYTA demonstrates:
-	•	Edge-native AI architecture
-	•	Strongly consistent state design
-	•	Streaming-safe persistence
-	•	Deterministic memory injection
-	•	Abuse mitigation
-	•	Production-minded prompt control
-
-It is intentionally engineered beyond a minimal LLM demo.
-
-
-🔮 Future Improvements
-	•	Vector-based long-term memory (Cloudflare Vectorize)
-	•	Structured tool/function calling
-	•	Authentication layer
-	•	Analytics integration
-	•	Cost tracking per session
-
-
-👤 Author
+## Author
 
 Parth Rohit
-Software Engineer
+
 

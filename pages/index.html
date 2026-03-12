@@ -1,211 +1,55 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>LYTA - Edge AI</title>
-<style>
-:root {
-  --bg: #f6f8fa;
-  --card: #ffffff;
-  --border: #ddd;
-  --text: #111;
-  --user: #2563eb;
-  --assistant: #16a34a;
-}
+<meta charset="UTF-8">
+<title>LYTA - Edge AI</title>
 
-.dark {
-  --bg: #0f172a;
-  --card: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --user: #60a5fa;
-  --assistant: #4ade80;
-}
+<link rel="stylesheet" href="/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
-body {
-  font-family: sans-serif;
-  margin: 40px;
-  background: var(--bg);
-  color: var(--text);
-  transition: background 0.3s, color 0.3s;
-}
-
-#chat {
-  border: 1px solid var(--border);
-  padding: 20px;
-  height: 400px;
-  overflow-y: auto;
-  background: var(--card);
-  border-radius: 8px;
-}
-
-.user {
-  color: var(--user);
-  font-weight: bold;
-}
-
-.assistant {
-  color: var(--assistant);
-}
-
-#controls {
-  margin-top: 10px;
-}
-
-input {
-  width: 70%;
-  padding: 8px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 6px;
-}
-
-button {
-  padding: 8px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  cursor: pointer;
-}
-</style>
 </head>
+
 <body>
 
-<div id="topbar">
-  <h2>LYTA - Edge AI (Cloudflare Workers)</h2>
-  <button onclick="toggleDark()">Dark Mode</button>
+<div id="app">
+
+<div id="sidebar">
+
+<div id="logo">LYTA</div>
+
+<button id="newChat">+ New Chat</button>
+
+<div id="sessions"></div>
+
 </div>
+
+
+<div id="main">
+
+<div id="topbar">
+<div>Edge AI Assistant</div>
+
+<div>
+<button onclick="toggleDark()">Theme</button>
+<button onclick="resetSession()">Reset</button>
+</div>
+</div>
+
 
 <div id="chat"></div>
 
+
 <div id="controls">
-  <input id="message" placeholder="Type a message..." />
-  <button onclick="send()">Send</button>
-  <button onclick="resetSession()">Reset</button>
+<textarea id="message" rows="1" placeholder="Ask something..."></textarea>
+<button onclick="send()">Send</button>
+<span id="typing">assistant thinking...</span>
 </div>
 
-<script>
-// ---------------------------
-// THEME (Dark Mode)
-// ---------------------------
-const savedTheme = localStorage.getItem("lyta_theme");
+</div>
 
-function toggleDark() {
-  document.body.classList.toggle("dark");
+</div>
 
-  if (document.body.classList.contains("dark")) {
-    localStorage.setItem("lyta_theme", "dark");
-  } else {
-    localStorage.setItem("lyta_theme", "light");
-  }
-}
-
-if (savedTheme === "dark") {
-  document.body.classList.add("dark");
-}
-
-// ---------------------------
-// SESSION
-// ---------------------------
-let sessionId = localStorage.getItem("lyta_session");
-
-if (!sessionId) {
-  sessionId = crypto.randomUUID();
-  localStorage.setItem("lyta_session", sessionId);
-}
-
-// ---------------------------
-// DOM REFERENCES
-// ---------------------------
-const chat = document.getElementById("chat");
-const input = document.getElementById("message");
-
-// ---------------------------
-// APPEND MESSAGE
-// ---------------------------
-function append(role, text) {
-  const div = document.createElement("div");
-  div.className = role;
-  div.textContent = role.toUpperCase() + ": " + text;
-  chat.appendChild(div);
-  chat.scrollTop = chat.scrollHeight;
-  return div;
-}
-
-// ---------------------------
-// SEND MESSAGE
-// ---------------------------
-async function send() {
-  const message = input.value.trim();
-  if (!message) return;
-
-  append("user", message);
-  input.value = "";
-
-  const assistantDiv = append("assistant", "");
-
-  const response = await fetch("/chat/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId, message })
-  });
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-
-  let buffer = "";
-  let fullText = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split("\n");
-    buffer = lines.pop(); // keep partial chunk
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      if (line.includes("[DONE]")) continue;
-
-      try {
-        const parsed = JSON.parse(line.replace("data: ", ""));
-        if (parsed.response) {
-          fullText += parsed.response;
-          assistantDiv.textContent = "ASSISTANT: " + fullText;
-        }
-      } catch {}
-    }
-  }
-}
-
-// ---------------------------
-// ENTER KEY SUPPORT
-// ---------------------------
-input.addEventListener("keydown", function (e) {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    send();
-  }
-});
-
-// ---------------------------
-// RESET
-// ---------------------------
-async function resetSession() {
-  await fetch("/reset", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId })
-  });
-
-  chat.innerHTML = "";
-}
-</script>
-
+<script src="/app.js"></script>
 
 </body>
 </html>
