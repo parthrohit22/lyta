@@ -1,7 +1,13 @@
-export function getSessionId(body: any): string {
-  if (body?.sessionId) {
-    return body.sessionId;
+export function getSessionId(request: Request) {
+
+  const url = new URL(request.url)
+
+  const session =
+    url.searchParams.get("session")
+
+  if(session){
+    return session
   }
 
-  return crypto.randomUUID();
+  return crypto.randomUUID()
 }

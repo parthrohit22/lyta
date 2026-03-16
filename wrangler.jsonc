@@ -6,16 +6,24 @@
 
   "migrations": [
     {
-      "new_sqlite_classes": ["Conversation"],
-      "tag": "v1"
+      "tag": "v1",
+      "new_sqlite_classes": ["Conversation"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["SessionIndex"]
     }
   ],
 
   "durable_objects": {
     "bindings": [
       {
-        "class_name": "Conversation",
-        "name": "CONVERSATION"
+        "name": "CONVERSATION",
+        "class_name": "Conversation"
+      },
+      {
+        "name": "SESSION_INDEX",
+        "class_name": "SessionIndex"
       }
     ]
   },
@@ -24,8 +32,10 @@
     "binding": "AI",
     "remote": true
   },
+
   "assets": {
-  "directory": "./pages"
-}, 
+    "directory": "./pages"
+  },
+
   "compatibility_flags": ["nodejs_compat"]
 }
