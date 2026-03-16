@@ -1,134 +1,256 @@
-# LYTA — Edge AI Assistant
+# LYTA — Edge-Native AI Assistant
 
-LYTA is an edge-native AI assistant built entirely on **Cloudflare Workers**.
+LYTA is an **edge-native AI assistant** built entirely on **Cloudflare Workers**.
 
-The project demonstrates how to design **stateful LLM systems at the edge** using:
+The project demonstrates how to design **stateful LLM systems at the edge**, rather than a typical frontend calling an AI API.
+
+LYTA combines:
 
 - Cloudflare Workers
 - Durable Objects
 - Workers AI
 - Streaming responses
 - Retrieval Augmented Generation (RAG)
+- Multi-session chat architecture
 
-The goal is to show **AI system architecture**, not just a basic chatbot.
+The goal of the project is to showcase **AI system architecture and distributed edge design**.
 
 
-## Live Demo
+---
+
+# Live Demo
 
 https://lyta.parthrohit-dev.workers.dev
 
-Features:
+You can open the link and interact with the system directly.
+
+Features available in the demo:
 
 - streaming AI responses
-- persistent conversation sessions
-- dark mode UI
-- multiple chats
-- session memory
-- markdown + code rendering
+- multiple chat sessions
+- persistent session memory
+- automatic chat titles
+- chat deletion
+- markdown and code rendering
 
 
-## Architecture
+---
 
+# Architecture
+
+LYTA is designed as an **edge-native distributed system**.
+```
 Browser UI
 │
 ▼
 Cloudflare Worker (Router)
 │
-▼
-Durable Object (Session State)
+├── SessionIndex Durable Object
+│       manages chat list
 │
 ▼
-Workers AI (LLM)
+Conversation Durable Object
+per-session memory and state
 │
 ▼
-Embedding + Retrieval Layer
-
-Responsibilities:
-
+Workers AI (LLM inference)
+│
+▼
+Retrieval Layer (RAG)
+knowledge context injection
+```
+### Responsibilities
+```
 | Layer | Purpose |
 |-----|-----|
-| Worker | HTTP routing, session handling |
-| Durable Object | strongly consistent chat memory |
+| Browser UI | user interaction and streaming display |
+| Worker Router | request routing and session resolution |
+| SessionIndex DO | chat list management |
+| Conversation DO | strongly consistent session memory |
 | Workers AI | LLM inference |
-| Retrieval | knowledge context injection |
+| Retrieval Layer | context injection via embeddings |
+```
+Each chat session is mapped to **its own Durable Object instance**, ensuring:
+
+- strongly consistent memory
+- isolated session state
+- deterministic execution
 
 
-## Core Features
 
-### Streaming Responses
-Token streaming using **Server-Sent Events (SSE)**.
-
-### Stateful Sessions
-Each chat session is mapped to a **Durable Object instance**.
-
-### Conversation Memory
-Short-term message history with automatic summarization.
-
-### Retrieval Augmented Generation
-User messages retrieve relevant knowledge using embeddings.
-
-### Edge Deployment
-The entire system runs on **Cloudflare’s edge network**.
+# Core Features
 
 
-## API
+## Streaming Responses
 
-### POST /chat
+AI responses are streamed using **Server-Sent Events (SSE)**.
 
+Tokens are forwarded from Workers AI to the browser in real time.
+
+
+## Stateful Chat Sessions
+
+Each chat session maps to a **Durable Object instance**.
+
+This provides:
+
+- consistent session memory
+- ordered execution
+- concurrent request safety
+
+
+## Conversation Memory
+
+Short-term conversation history is stored inside the Durable Object.
+
+To prevent unbounded context growth:
+
+- recent messages are kept
+- older messages are summarized automatically
+
+
+## Automatic Chat Titles
+
+The first user message generates a short title for the chat session.
+
+
+## Multi-Chat System
+
+The interface supports multiple conversations.
+
+Chats can be:
+
+- created
+- switched
+- deleted
+
+
+## Retrieval Augmented Generation (RAG)
+
+User queries are augmented with relevant knowledge using embeddings before being sent to the model.
+
+
+## Edge Deployment
+
+The entire system runs at the **Cloudflare edge network**, providing:
+
+- low latency
+- global scalability
+- distributed compute
+
+
+
+
+# API Reference
+
+Although LYTA includes a browser UI, the backend is exposed as an API.
+
+
+## POST /chat
+
+Send a message and receive a full response.
+
+```json
 {
-“message”: “Hello”
+  "message": "Hello"
 }
 
-Response
+Response:
 
 {
-“reply”: “Hello!”
+  "reply": "Hello!"
 }
 
-### POST /chat/stream
+POST /chat/stream
 
-Returns streaming response tokens.
+Streams the response tokens using Server-Sent Events.
 
-### GET /history
+GET /history
 
 Returns recent conversation messages.
 
-### POST /reset
+GET /meta
 
-Clears session memory.
+Returns metadata about a chat session.
 
+Example response:
 
-## Running Locally
+{
+  "title": "Edge AI Architecture"
+}
+
+GET /stats
+
+Returns session statistics.
+
+Example:
+
+{
+  "messageCount": 6,
+  "hasSummary": true
+}
+
+POST /reset
+
+Deletes the conversation history for a session.
+
+Running Locally
 
 Requirements
+	•	Node.js 18+
+	•	Wrangler CLI
 
-Node 18+
-Wrangler CLI
-
-Install dependencies
+Install Dependencies
 
 npm install
 
-Run development server
+Start Development Server
 
-wrangler dev –remote
+wrangler dev --remote
 
 Open
 
 http://localhost:8787
 
-## Technologies
-
-- Cloudflare Workers
-- Durable Objects
-- Workers AI
-- TypeScript
-- Server-Sent Events
-- Vector embeddings
 
 
-## Author
+Technologies
+
+LYTA is built using:
+	•	Cloudflare Workers
+	•	Durable Objects
+	•	Workers AI
+	•	TypeScript
+	•	Server-Sent Events
+	•	Vector embeddings
+	•	Retrieval Augmented Generation
+
+
+Design Goals
+
+This project demonstrates:
+	•	edge-native AI system architecture
+	•	strongly consistent session state
+	•	streaming-safe persistence
+	•	scalable multi-chat infrastructure
+	•	modular LLM integration
+
+
+
+Future Improvements
+
+Planned enhancements include:
+	•	vector-based long-term memory
+	•	user profiles and customization
+	•	theme and UI personalization
+	•	tool / function calling
+	•	analytics and usage tracking
+
+
+
+Author
 
 Parth Rohit
 
+Software Engineer
 
