@@ -1,81 +1,37 @@
-const MAX_ATTACHMENTS = 4
-const MAX_DOCUMENT_TEXT = 12000
-const MAX_SUMMARY_LENGTH = 180
-const MAX_IMAGE_PAYLOAD_BYTES = 900000
-const ACTIVE_SESSION_KEY = "lyta_active_session"
+const {
+  MAX_ATTACHMENTS,
+  ACTIVE_SESSION_KEY,
+  DEFAULT_PROFILE,
+  THEME_KEYS,
+  THEME_PRESETS,
+  DEFAULT_PREFERENCES,
+  normalizeChatModeValue,
+  getChatModeLabel,
+  normalizeMessageRecord,
+  normalizeCitations,
+  normalizeFollowups,
+  normalizeSessions,
+  normalizeSessionRecord,
+  normalizeProfile,
+  normalizePreferences,
+  normalizeLibraryFiles,
+  buildThemeStyles,
+  toSingleLine,
+  formatMimeLabel,
+  formatBytes,
+  formatRelativeTime,
+  renderMarkdown,
+  setStatusState,
+  getInitials,
+  hasDraggedFiles,
+  getErrorMessage,
+  cloneAttachment,
+  clonePreferences,
+  slugify,
+  apiJson
+} = window.LytaCore
 
-const DEFAULT_PROFILE = {
-  name: "Guest User",
-  workspace: "Private Workspace",
-  email: ""
-}
-
-const THEME_KEYS = [
-  "background",
-  "sidebar",
-  "topbar",
-  "conversation",
-  "composer",
-  "assistantBubble",
-  "userBubble",
-  "accent"
-]
-
-const THEME_PRESETS = {
-  atelier: {
-    background: "#f2ede3",
-    sidebar: "#faf5ec",
-    topbar: "#fffaf0",
-    conversation: "#fffdf8",
-    composer: "#fff8ef",
-    assistantBubble: "#fff4e8",
-    userBubble: "#1f6b72",
-    accent: "#c35d3f"
-  },
-  harbor: {
-    background: "#e7efe9",
-    sidebar: "#eff6f1",
-    topbar: "#f7fbf8",
-    conversation: "#fcfffd",
-    composer: "#f5fbf8",
-    assistantBubble: "#ffffff",
-    userBubble: "#235b66",
-    accent: "#5a7d59"
-  },
-  linen: {
-    background: "#f3f0ec",
-    sidebar: "#fbfaf7",
-    topbar: "#fffdfa",
-    conversation: "#fdfbf8",
-    composer: "#fffdf9",
-    assistantBubble: "#fff8f2",
-    userBubble: "#8a4f3d",
-    accent: "#9c6d2d"
-  }
-}
-
-const DEFAULT_PREFERENCES = {
-  theme: { ...THEME_PRESETS.atelier },
-  ui: {
-    sidebarHidden: false,
-    boardOpen: true,
-    chatMode: "instant"
-  }
-}
-
-const TEXT_FILE_EXTENSIONS = new Set([
-  "txt",
-  "md",
-  "csv",
-  "json",
-  "html",
-  "htm",
-  "xml"
-])
-
-const PDF_MIME = "application/pdf"
-const DOCX_MIME =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+const { prepareAttachment } = window.LytaAttachments
 
 const state = {
   user: null,
@@ -90,8 +46,7 @@ const state = {
   sending: false,
   authMode: "register",
   uploadTarget: "composer",
-  preferenceTimer: null,
-  statusTimer: null
+  preferenceTimer: null
 }
 
 const dom = {
@@ -106,7 +61,6 @@ const dom = {
   authSubmit: document.getElementById("authSubmit"),
   authStatus: document.getElementById("authStatus"),
   authTabs: Array.from(document.querySelectorAll("[data-auth-mode]")),
-  appShell: document.getElementById("appShell"),
   workspaceBadge: document.getElementById("workspaceBadge"),
   sessionCount: document.getElementById("sessionCount"),
   sessions: document.getElementById("sessions"),
@@ -159,6 +113,22 @@ const dom = {
   libraryHint: document.getElementById("libraryHint"),
   libraryStatus: document.getElementById("libraryStatus"),
   suggestionChips: Array.from(document.querySelectorAll("[data-prompt]"))
+}
+
+const statusTargets = {
+  composer: dom.composerStatus,
+  auth: dom.authStatus,
+  profile: dom.profileStatus,
+  library: dom.libraryStatus
+}
+
+function setActiveSession(id) {
+  state.sessionId = id || ""
+  sessionStorage.setItem(ACTIVE_SESSION_KEY, state.sessionId)
+}
+
+function setStatus(target, message, stateName = "neutral", fallback = "") {
+  setStatusState(target, message, stateName, fallback)
 }
 
 if (window.marked) {
@@ -506,8 +476,7 @@ async function bootstrapWorkspace() {
   }
 
   if (!state.sessions.some(session => session.id === state.sessionId)) {
-    state.sessionId = state.sessions[0].id
-    sessionStorage.setItem(ACTIVE_SESSION_KEY, state.sessionId)
+    setActiveSession(state.sessions[0].id)
   }
 
   await loadCurrentSession()
@@ -540,8 +509,7 @@ async function createNewSession() {
   }
 
   state.sessions.unshift(session)
-  state.sessionId = session.id
-  sessionStorage.setItem(ACTIVE_SESSION_KEY, state.sessionId)
+  setActiveSession(session.id)
 
   renderSessions()
   await loadCurrentSession()
@@ -550,8 +518,7 @@ async function createNewSession() {
 async function selectSession(id) {
   if (!id || id === state.sessionId) return
 
-  state.sessionId = id
-  sessionStorage.setItem(ACTIVE_SESSION_KEY, state.sessionId)
+  setActiveSession(id)
   renderSessions()
   await loadCurrentSession()
 }
@@ -575,8 +542,7 @@ async function deleteSession(id) {
     }
 
     if (state.sessionId === id) {
-      state.sessionId = state.sessions[0].id
-      sessionStorage.setItem(ACTIVE_SESSION_KEY, state.sessionId)
+      setActiveSession(state.sessions[0].id)
       await loadCurrentSession()
     } else {
       renderSessions()
@@ -671,12 +637,10 @@ async function syncSessionTitleFromServer() {
   } catch {}
 }
 
-async function sendMessage(prefilledText) {
+async function sendMessage() {
   if (state.sending || !state.sessionId) return
 
-  const message = typeof prefilledText === "string"
-    ? prefilledText.trim()
-    : dom.input.value.trim()
+  const message = dom.input.value.trim()
 
   if (!message && !state.pendingAttachments.length) {
     return
@@ -728,20 +692,17 @@ async function sendMessage(prefilledText) {
   scrollConversation()
 
   try {
-    const response = await fetch(
-      `/chat/stream?session=${encodeURIComponent(state.sessionId)}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          message,
-          mode,
-          attachments
-        })
-      }
-    )
+    const response = await fetch(`/chat/stream?session=${encodeURIComponent(state.sessionId)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        message,
+        mode,
+        attachments
+      })
+    })
 
     if (!response.ok) {
       throw new Error(await response.text() || "Unable to send this message.")
@@ -751,108 +712,13 @@ async function sendMessage(prefilledText) {
       throw new Error("Streaming is not available right now.")
     }
 
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-
-    let buffer = ""
     let metaApplied = false
 
-    while (true) {
-      const { done, value } = await reader.read()
-
-      if (done) break
-
-      buffer += decoder.decode(value, { stream: true })
-
-      const events = buffer.split("\n\n")
-      buffer = events.pop() || ""
-
-      for (const eventText of events) {
-        const payloads = eventText
-          .split("\n")
-          .filter(line => line.startsWith("data: "))
-          .map(line => line.slice(6).trim())
-
-        for (const payload of payloads) {
-          if (!payload || payload === "[DONE]") {
-            continue
-          }
-
-          let parsed
-
-          try {
-            parsed = JSON.parse(payload)
-          } catch {
-            continue
-          }
-
-          if (typeof parsed.response === "string") {
-            assistantMessage.content += parsed.response
-            updateAssistantNode(assistantNode, assistantMessage)
-            if (state.selectedMessageId === assistantMessage.id) {
-              renderBoard()
-            }
-            scrollConversation()
-            continue
-          }
-
-          if (parsed.done) {
-            showTyping(false)
-          }
-
-          if (parsed.error) {
-            throw new Error(parsed.error)
-          }
-
-          if (parsed.meta) {
-            assistantMessage.citations = normalizeCitations(parsed.citations)
-            assistantMessage.followups = normalizeFollowups(parsed.followups)
-            assistantMessage.content =
-              assistantMessage.content.trim() ||
-              "I couldn't generate a response for that request."
-            updateAssistantNode(assistantNode, assistantMessage)
-
-            if (typeof parsed.title === "string" && parsed.title.trim()) {
-              updateSessionTitle(state.sessionId, parsed.title.trim())
-              renderSessions()
-              updateTopbar()
-            }
-
-            state.selectedMessageId = assistantMessage.id
-            renderBoard()
-            metaApplied = true
-          }
-        }
-      }
-    }
-
-    if (buffer.trim()) {
-      const lastPayload = buffer
-        .split("\n")
-        .find(line => line.startsWith("data: "))
-        ?.slice(6)
-        .trim()
-
-      if (lastPayload && lastPayload !== "[DONE]") {
-        try {
-          const parsed = JSON.parse(lastPayload)
-
-          if (parsed.meta) {
-            assistantMessage.citations = normalizeCitations(parsed.citations)
-            assistantMessage.followups = normalizeFollowups(parsed.followups)
-            if (typeof parsed.title === "string" && parsed.title.trim()) {
-              updateSessionTitle(state.sessionId, parsed.title.trim())
-              renderSessions()
-              updateTopbar()
-            }
-            updateAssistantNode(assistantNode, assistantMessage)
-            state.selectedMessageId = assistantMessage.id
-            renderBoard()
-            metaApplied = true
-          }
-        } catch {}
-      }
-    }
+    await consumeStreamPayloads(response.body, parsed => {
+      metaApplied =
+        handleAssistantPayload(parsed, assistantMessage, assistantNode) ||
+        metaApplied
+    })
 
     if (!assistantMessage.content.trim()) {
       assistantMessage.content = "I couldn't generate a response for that request."
@@ -899,6 +765,96 @@ async function sendMessage(prefilledText) {
     setSendingState(false)
     scrollConversation()
   }
+}
+
+function handleAssistantPayload(parsed, assistantMessage, assistantNode) {
+  if (typeof parsed.response === "string") {
+    assistantMessage.content += parsed.response
+    syncAssistantMessage(assistantNode, assistantMessage)
+    return false
+  }
+
+  if (parsed.done) {
+    showTyping(false)
+  }
+
+  if (parsed.error) {
+    throw new Error(parsed.error)
+  }
+
+  if (!parsed.meta) {
+    return false
+  }
+
+  assistantMessage.citations = normalizeCitations(parsed.citations)
+  assistantMessage.followups = normalizeFollowups(parsed.followups)
+  assistantMessage.content =
+    assistantMessage.content.trim() ||
+    "I couldn't generate a response for that request."
+
+  if (typeof parsed.title === "string" && parsed.title.trim()) {
+    updateSessionTitle(state.sessionId, parsed.title.trim())
+    renderSessions()
+    updateTopbar()
+  }
+
+  state.selectedMessageId = assistantMessage.id
+  syncAssistantMessage(assistantNode, assistantMessage)
+  return true
+}
+
+function syncAssistantMessage(node, message) {
+  updateAssistantNode(node, message)
+
+  if (state.selectedMessageId === message.id) {
+    renderBoard()
+  }
+
+  scrollConversation()
+}
+
+async function consumeStreamPayloads(stream, onPayload) {
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+
+    if (done) {
+      break
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+    buffer = flushStreamBuffer(buffer, onPayload)
+  }
+
+  if (buffer.trim()) {
+    parseStreamChunk(buffer).forEach(onPayload)
+  }
+}
+
+function flushStreamBuffer(buffer, onPayload) {
+  const events = buffer.split("\n\n")
+  const nextBuffer = events.pop() || ""
+  events.flatMap(parseStreamChunk).forEach(onPayload)
+  return nextBuffer
+}
+
+function parseStreamChunk(chunk) {
+  return chunk
+    .split("\n")
+    .filter(line => line.startsWith("data: "))
+    .map(line => line.slice(6).trim())
+    .filter(payload => payload && payload !== "[DONE]")
+    .map(payload => {
+      try {
+        return JSON.parse(payload)
+      } catch {
+        return null
+      }
+    })
+    .filter(Boolean)
 }
 
 function createMessageElement(message) {
@@ -978,12 +934,7 @@ function updateAssistantNode(node, message) {
 
 function renderMessageContent(target, message) {
   if (message.role === "assistant") {
-    const rendered =
-      window.marked?.parse(message.content || "...") ||
-      escapeHtml(message.content || "...")
-
-    target.innerHTML =
-      window.DOMPurify?.sanitize(rendered) || rendered
+    target.innerHTML = renderMarkdown(message.content, "...")
     return
   }
 
@@ -1328,13 +1279,7 @@ function renderBoard() {
   dom.boardTitle.textContent = deriveBoardTitle(message)
   dom.boardState.hidden = true
   dom.boardBody.hidden = false
-
-  const rendered =
-    window.marked?.parse(message.content || "") ||
-    escapeHtml(message.content || "")
-
-  dom.boardBody.innerHTML =
-    window.DOMPurify?.sanitize(rendered) || rendered
+  dom.boardBody.innerHTML = renderMarkdown(message.content)
 
   renderBoardSources(message.citations)
 }
@@ -1644,46 +1589,10 @@ function updateTopbar() {
 }
 
 function applyThemeConfig(theme, persist = false) {
-  state.preferences.theme = sanitizeThemeConfig(theme)
+  const { theme: nextTheme, styles } = buildThemeStyles(theme)
+  state.preferences.theme = nextTheme
 
-  const pageText = readableTextColor(state.preferences.theme.background)
-  const sidebarText = readableTextColor(state.preferences.theme.sidebar)
-  const topbarText = readableTextColor(state.preferences.theme.topbar)
-  const conversationText = readableTextColor(state.preferences.theme.conversation)
-  const composerText = readableTextColor(state.preferences.theme.composer)
-  const assistantText = readableTextColor(state.preferences.theme.assistantBubble)
-  const userText = readableTextColor(state.preferences.theme.userBubble)
-  const accentText = readableTextColor(state.preferences.theme.accent)
-
-  const cssVars = {
-    "--app-background": state.preferences.theme.background,
-    "--sidebar-background": state.preferences.theme.sidebar,
-    "--topbar-background": state.preferences.theme.topbar,
-    "--conversation-background": state.preferences.theme.conversation,
-    "--composer-background": state.preferences.theme.composer,
-    "--assistant-bubble": state.preferences.theme.assistantBubble,
-    "--user-bubble": state.preferences.theme.userBubble,
-    "--accent": state.preferences.theme.accent,
-    "--page-text": pageText,
-    "--page-muted": alphaColor(pageText, 0.66),
-    "--sidebar-text": sidebarText,
-    "--sidebar-muted": alphaColor(sidebarText, 0.68),
-    "--topbar-text": topbarText,
-    "--topbar-muted": alphaColor(topbarText, 0.66),
-    "--conversation-text": conversationText,
-    "--conversation-muted": alphaColor(conversationText, 0.68),
-    "--composer-text": composerText,
-    "--composer-muted": alphaColor(composerText, 0.68),
-    "--assistant-text": assistantText,
-    "--user-text": userText,
-    "--accent-text": accentText,
-    "--line-color": alphaColor(pageText, 0.12),
-    "--line-strong": alphaColor(pageText, 0.2),
-    "--accent-soft": alphaColor(state.preferences.theme.accent, 0.14),
-    "--shadow": `0 18px 48px ${alphaColor(pageText, isLightColor(state.preferences.theme.background) ? 0.08 : 0.18)}`
-  }
-
-  Object.entries(cssVars).forEach(([name, value]) => {
+  Object.entries(styles).forEach(([name, value]) => {
     document.documentElement.style.setProperty(name, value)
   })
 
@@ -1782,478 +1691,6 @@ function getDefaultStatus() {
     : "Uploads sync into your account library automatically."
 }
 
-function normalizeMessageRecord(message) {
-  return {
-    id: typeof message?.id === "string" ? message.id : crypto.randomUUID(),
-    role: message?.role === "assistant" ? "assistant" : "user",
-    content: typeof message?.content === "string" ? message.content : "",
-    mode: normalizeChatModeValue(message?.mode),
-    attachments: normalizeAttachments(message?.attachments),
-    citations: normalizeCitations(message?.citations),
-    followups: normalizeFollowups(message?.followups)
-  }
-}
-
-function normalizeAttachments(value) {
-  return Array.isArray(value)
-    ? value.map(attachment => ({
-        id: typeof attachment?.id === "string" ? attachment.id : crypto.randomUUID(),
-        libraryFileId:
-          typeof attachment?.libraryFileId === "string"
-            ? attachment.libraryFileId
-            : "",
-        kind: attachment?.kind === "image" ? "image" : "document",
-        name:
-          typeof attachment?.name === "string" && attachment.name.trim()
-            ? attachment.name.trim()
-            : "Attachment",
-        mimeType:
-          typeof attachment?.mimeType === "string" && attachment.mimeType.trim()
-            ? attachment.mimeType.trim()
-            : "application/octet-stream",
-        size: Number.isFinite(attachment?.size) ? attachment.size : 0,
-        summary:
-          typeof attachment?.summary === "string"
-            ? attachment.summary
-            : "",
-        dataUrl:
-          typeof attachment?.dataUrl === "string"
-            ? attachment.dataUrl
-            : "",
-        extractedText:
-          typeof attachment?.extractedText === "string"
-            ? attachment.extractedText
-            : ""
-      }))
-    : []
-}
-
-function normalizeCitations(value) {
-  return Array.isArray(value)
-    ? value
-        .filter(Boolean)
-        .map((citation, index) => ({
-          id:
-            typeof citation?.id === "string"
-              ? citation.id
-              : `source-${index + 1}`,
-          label:
-            typeof citation?.label === "string" && citation.label.trim()
-              ? citation.label.trim()
-              : `Source ${index + 1}`,
-          fileId:
-            typeof citation?.fileId === "string"
-              ? citation.fileId
-              : "",
-          fileName:
-            typeof citation?.fileName === "string" && citation.fileName.trim()
-              ? citation.fileName.trim()
-              : "Attachment",
-          snippet:
-            typeof citation?.snippet === "string"
-              ? citation.snippet.trim()
-              : ""
-        }))
-        .filter(citation => citation.snippet)
-    : []
-}
-
-function normalizeFollowups(value) {
-  return Array.isArray(value)
-    ? value
-        .filter(item => typeof item === "string")
-        .map(item => item.trim())
-        .filter(Boolean)
-        .slice(0, 3)
-    : []
-}
-
-function normalizeSessions(value) {
-  return Array.isArray(value)
-    ? value.map(normalizeSessionRecord).filter(Boolean)
-    : []
-}
-
-function normalizeSessionRecord(value) {
-  if (typeof value?.id !== "string" || !value.id) {
-    return null
-  }
-
-  return {
-    id: value.id,
-    title:
-      typeof value?.title === "string" && value.title.trim()
-        ? value.title.trim()
-        : "New Chat",
-    createdAt:
-      typeof value?.createdAt === "string"
-        ? value.createdAt
-        : new Date().toISOString(),
-    updatedAt:
-      typeof value?.updatedAt === "string"
-        ? value.updatedAt
-        : new Date().toISOString()
-  }
-}
-
-function normalizeProfile(profile, user) {
-  return {
-    name:
-      typeof profile?.name === "string" && profile.name.trim()
-        ? profile.name.trim()
-        : DEFAULT_PROFILE.name,
-    workspace:
-      typeof profile?.workspace === "string" && profile.workspace.trim()
-        ? profile.workspace.trim()
-        : DEFAULT_PROFILE.workspace,
-    email:
-      typeof profile?.email === "string" && profile.email.trim()
-        ? profile.email.trim()
-        : user?.email || ""
-  }
-}
-
-function normalizePreferences(preferences) {
-  return {
-    theme: sanitizeThemeConfig(preferences?.theme || THEME_PRESETS.atelier),
-    ui: {
-      sidebarHidden: Boolean(preferences?.ui?.sidebarHidden),
-      boardOpen: preferences?.ui?.boardOpen !== false,
-      chatMode: normalizeChatModeValue(preferences?.ui?.chatMode)
-    }
-  }
-}
-
-function normalizeLibraryFiles(value) {
-  return Array.isArray(value)
-    ? value.map(file => ({
-        libraryFileId:
-          typeof file?.libraryFileId === "string"
-            ? file.libraryFileId
-            : crypto.randomUUID(),
-        kind: file?.kind === "image" ? "image" : "document",
-        name:
-          typeof file?.name === "string" && file.name.trim()
-            ? file.name.trim()
-            : "Attachment",
-        mimeType:
-          typeof file?.mimeType === "string" && file.mimeType.trim()
-            ? file.mimeType.trim()
-            : "application/octet-stream",
-        size: Number.isFinite(file?.size) ? file.size : 0,
-        summary:
-          typeof file?.summary === "string"
-            ? file.summary
-            : "",
-        dataUrl:
-          typeof file?.dataUrl === "string"
-            ? file.dataUrl
-            : "",
-        extractedText:
-          typeof file?.extractedText === "string"
-            ? file.extractedText
-            : "",
-        createdAt:
-          typeof file?.createdAt === "string"
-            ? file.createdAt
-            : new Date().toISOString(),
-        updatedAt:
-          typeof file?.updatedAt === "string"
-            ? file.updatedAt
-            : new Date().toISOString()
-      }))
-    : []
-}
-
-function sanitizeThemeConfig(value) {
-  const next = {}
-
-  THEME_KEYS.forEach(key => {
-    next[key] = normalizeHexColor(value?.[key], THEME_PRESETS.atelier[key])
-  })
-
-  return next
-}
-
-async function prepareAttachment(file) {
-  const mimeType = inferMimeType(file)
-  const extension = getFileExtension(file.name)
-
-  if (mimeType.startsWith("image/")) {
-    return prepareImageAttachment(file, mimeType)
-  }
-
-  if (mimeType === PDF_MIME || extension === "pdf") {
-    return preparePdfAttachment(file, mimeType || PDF_MIME)
-  }
-
-  if (mimeType === DOCX_MIME || extension === "docx") {
-    return prepareDocxAttachment(file, mimeType || DOCX_MIME)
-  }
-
-  if (
-    mimeType.startsWith("text/") ||
-    mimeType === "application/json" ||
-    mimeType === "application/xml" ||
-    TEXT_FILE_EXTENSIONS.has(extension)
-  ) {
-    return prepareTextAttachment(file, mimeType || "text/plain")
-  }
-
-  throw new Error(
-    "Use images, PDF, DOCX, TXT, MD, CSV, JSON, HTML, or XML files."
-  )
-}
-
-async function prepareTextAttachment(file, mimeType) {
-  const extractedText = cleanDocumentText(await file.text())
-
-  if (!extractedText) {
-    throw new Error("This document did not contain readable text.")
-  }
-
-  return buildDocumentAttachment(file, mimeType, extractedText, "Text")
-}
-
-async function preparePdfAttachment(file, mimeType) {
-  if (!window.pdfjsLib?.getDocument) {
-    throw new Error("PDF tools are still loading. Try again in a moment.")
-  }
-
-  const pdf =
-    await window.pdfjsLib.getDocument({
-      data: await file.arrayBuffer()
-    }).promise
-
-  let extractedText = ""
-  const pageLimit = Math.min(pdf.numPages, 8)
-
-  for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
-    const page = await pdf.getPage(pageNumber)
-    const content = await page.getTextContent()
-    extractedText += content.items.map(item => item.str || "").join(" ") + "\n\n"
-
-    if (extractedText.length >= MAX_DOCUMENT_TEXT * 1.2) {
-      break
-    }
-  }
-
-  extractedText = cleanDocumentText(extractedText)
-
-  if (!extractedText) {
-    throw new Error(
-      "This PDF did not expose readable text. Try a text-based PDF or paste excerpts."
-    )
-  }
-
-  return buildDocumentAttachment(
-    file,
-    mimeType,
-    extractedText,
-    "PDF",
-    `${pdf.numPages} page${pdf.numPages === 1 ? "" : "s"}`
-  )
-}
-
-async function prepareDocxAttachment(file, mimeType) {
-  if (!window.mammoth?.extractRawText) {
-    throw new Error("DOCX tools are still loading. Try again in a moment.")
-  }
-
-  const result =
-    await window.mammoth.extractRawText({
-      arrayBuffer: await file.arrayBuffer()
-    })
-
-  const extractedText = cleanDocumentText(result.value)
-
-  if (!extractedText) {
-    throw new Error("This DOCX file did not contain readable text.")
-  }
-
-  return buildDocumentAttachment(file, mimeType, extractedText, "DOCX")
-}
-
-function buildDocumentAttachment(
-  file,
-  mimeType,
-  extractedText,
-  kindLabel,
-  detail = ""
-) {
-  const summary = [
-    kindLabel,
-    detail,
-    toSingleLine(extractedText, 110)
-  ]
-    .filter(Boolean)
-    .join(" • ")
-    .slice(0, MAX_SUMMARY_LENGTH)
-
-  return {
-    id: crypto.randomUUID(),
-    libraryFileId: "",
-    kind: "document",
-    name: file.name,
-    mimeType,
-    size: file.size,
-    summary,
-    extractedText
-  }
-}
-
-async function prepareImageAttachment(file, mimeType) {
-  const image = await loadImageElement(file)
-
-  let maxSide = 1600
-  let outputType = mimeType === "image/png" ? "image/png" : "image/jpeg"
-  let quality = outputType === "image/png" ? undefined : 0.88
-  let width = image.naturalWidth
-  let height = image.naturalHeight
-  let blob = null
-
-  while (true) {
-    const scale =
-      Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight))
-
-    width = Math.max(1, Math.round(image.naturalWidth * scale))
-    height = Math.max(1, Math.round(image.naturalHeight * scale))
-
-    const canvas = document.createElement("canvas")
-    canvas.width = width
-    canvas.height = height
-
-    const context = canvas.getContext("2d")
-
-    if (!context) {
-      throw new Error("Your browser could not prepare this image.")
-    }
-
-    context.drawImage(image, 0, 0, width, height)
-    blob = await canvasToBlob(canvas, outputType, quality)
-
-    if (!blob) {
-      throw new Error("Unable to convert this image.")
-    }
-
-    if (
-      blob.size <= MAX_IMAGE_PAYLOAD_BYTES ||
-      (maxSide <= 900 && (quality == null || quality <= 0.74))
-    ) {
-      break
-    }
-
-    if (outputType === "image/png") {
-      outputType = "image/jpeg"
-      quality = 0.84
-      continue
-    }
-
-    if (quality && quality > 0.74) {
-      quality -= 0.08
-      continue
-    }
-
-    maxSide = Math.round(maxSide * 0.84)
-  }
-
-  const dataUrl = await blobToDataUrl(blob)
-
-  return {
-    id: crypto.randomUUID(),
-    libraryFileId: "",
-    kind: "image",
-    name: file.name,
-    mimeType: blob.type || outputType,
-    size: blob.size,
-    summary: `${width} x ${height} image`,
-    dataUrl
-  }
-}
-
-function inferMimeType(file) {
-  if (file.type) {
-    return file.type
-  }
-
-  const extension = getFileExtension(file.name)
-  const map = {
-    pdf: PDF_MIME,
-    docx: DOCX_MIME,
-    txt: "text/plain",
-    md: "text/markdown",
-    csv: "text/csv",
-    json: "application/json",
-    html: "text/html",
-    htm: "text/html",
-    xml: "application/xml"
-  }
-
-  return map[extension] || "application/octet-stream"
-}
-
-function getFileExtension(name) {
-  return name.split(".").pop()?.toLowerCase() || ""
-}
-
-function cleanDocumentText(text) {
-  return (text || "")
-    .replace(/\u0000/g, " ")
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, MAX_DOCUMENT_TEXT)
-}
-
-function toSingleLine(text, limit) {
-  return (text || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, limit)
-}
-
-function formatMimeLabel(mimeType) {
-  if (!mimeType) return "File"
-
-  const label = mimeType.split("/").pop() || mimeType
-  return label.replace(/[-+.]/g, " ").toUpperCase()
-}
-
-function formatBytes(size) {
-  if (!size) {
-    return "0 B"
-  }
-
-  const units = ["B", "KB", "MB", "GB"]
-  let value = size
-  let index = 0
-
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[index]}`
-}
-
-function formatRelativeTime(iso) {
-  if (!iso) return "Recently"
-
-  const delta = Date.now() - new Date(iso).getTime()
-
-  if (!Number.isFinite(delta)) return "Recently"
-
-  const minute = 60_000
-  const hour = minute * 60
-  const day = hour * 24
-
-  if (delta < minute) return "Just now"
-  if (delta < hour) return `${Math.round(delta / minute)}m ago`
-  if (delta < day) return `${Math.round(delta / hour)}h ago`
-  return `${Math.round(delta / day)}d ago`
-}
-
 function setSendingState(active) {
   dom.sendButton.disabled = active
   dom.attachBtn.disabled = active
@@ -2261,43 +1698,19 @@ function setSendingState(active) {
 }
 
 function setComposerStatus(message, stateName = "neutral") {
-  dom.composerStatus.textContent = message || getDefaultStatus()
-
-  if (stateName === "neutral") {
-    delete dom.composerStatus.dataset.state
-  } else {
-    dom.composerStatus.dataset.state = stateName
-  }
+  setStatus(statusTargets.composer, message, stateName, getDefaultStatus())
 }
 
 function setAuthStatus(message, stateName = "neutral") {
-  dom.authStatus.textContent = message || ""
-
-  if (stateName === "neutral") {
-    delete dom.authStatus.dataset.state
-  } else {
-    dom.authStatus.dataset.state = stateName
-  }
+  setStatus(statusTargets.auth, message, stateName)
 }
 
 function setProfileStatus(message, stateName = "neutral") {
-  dom.profileStatus.textContent = message || ""
-
-  if (stateName === "neutral") {
-    delete dom.profileStatus.dataset.state
-  } else {
-    dom.profileStatus.dataset.state = stateName
-  }
+  setStatus(statusTargets.profile, message, stateName)
 }
 
 function setLibraryStatus(message, stateName = "neutral") {
-  dom.libraryStatus.textContent = message || ""
-
-  if (stateName === "neutral") {
-    delete dom.libraryStatus.dataset.state
-  } else {
-    dom.libraryStatus.dataset.state = stateName
-  }
+  setStatus(statusTargets.library, message, stateName)
 }
 
 function showTyping(visible) {
@@ -2368,187 +1781,4 @@ function deriveBoardTitle(message) {
     getCurrentSessionTitle()
 
   return heading.trim().slice(0, 60) || "Selected Output"
-}
-
-function normalizeChatModeValue(value) {
-  if (value === "deep" || value === "creative") {
-    return value
-  }
-
-  return "instant"
-}
-
-function getChatModeLabel(mode) {
-  switch (normalizeChatModeValue(mode)) {
-    case "deep":
-      return "Deep"
-    case "creative":
-      return "Creative"
-    default:
-      return "Instant"
-  }
-}
-
-function normalizeHexColor(value, fallback) {
-  if (typeof value !== "string") {
-    return fallback
-  }
-
-  const trimmed = value.trim()
-
-  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) {
-    return trimmed.toLowerCase()
-  }
-
-  if (/^#[0-9a-fA-F]{3}$/.test(trimmed)) {
-    return `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`.toLowerCase()
-  }
-
-  return fallback
-}
-
-function readableTextColor(hex) {
-  return isLightColor(hex) ? "#1d1f1d" : "#f8fafc"
-}
-
-function isLightColor(hex) {
-  const { r, g, b } = hexToRgb(hex)
-  const luminance =
-    (0.2126 * srgbChannel(r)) +
-    (0.7152 * srgbChannel(g)) +
-    (0.0722 * srgbChannel(b))
-
-  return luminance > 0.54
-}
-
-function srgbChannel(value) {
-  const normalized = value / 255
-
-  if (normalized <= 0.03928) {
-    return normalized / 12.92
-  }
-
-  return ((normalized + 0.055) / 1.055) ** 2.4
-}
-
-function alphaColor(hex, alpha) {
-  const { r, g, b } = hexToRgb(hex)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
-function hexToRgb(hex) {
-  return {
-    r: Number.parseInt(hex.slice(1, 3), 16),
-    g: Number.parseInt(hex.slice(3, 5), 16),
-    b: Number.parseInt(hex.slice(5, 7), 16)
-  }
-}
-
-function getInitials(name) {
-  return (name || "LY")
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0]?.toUpperCase() || "")
-    .join("") || "LY"
-}
-
-function hasDraggedFiles(event) {
-  return Array.from(event.dataTransfer?.types || []).includes("Files")
-}
-
-function escapeHtml(text) {
-  return (text || "").replace(/[&<>"']/g, character => {
-    const entities = {
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;",
-      "'": "&#39;"
-    }
-
-    return entities[character]
-  })
-}
-
-function getErrorMessage(error, fallback = "Something went wrong.") {
-  return error instanceof Error && error.message
-    ? error.message
-    : fallback
-}
-
-function cloneAttachment(attachment) {
-  return {
-    id: attachment.id,
-    libraryFileId: attachment.libraryFileId || "",
-    kind: attachment.kind,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    size: attachment.size,
-    summary: attachment.summary,
-    dataUrl: attachment.dataUrl,
-    extractedText: attachment.extractedText
-  }
-}
-
-function clonePreferences(preferences) {
-  return {
-    theme: { ...preferences.theme },
-    ui: { ...preferences.ui }
-  }
-}
-
-function slugify(value) {
-  return (value || "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 48)
-}
-
-async function apiJson(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(options.headers || {})
-    }
-  })
-
-  if (!response.ok) {
-    throw new Error(await response.text() || "Request failed.")
-  }
-
-  return response.json()
-}
-
-async function loadImageElement(file) {
-  const objectUrl = URL.createObjectURL(file)
-
-  try {
-    return await new Promise((resolve, reject) => {
-      const image = new Image()
-
-      image.onload = () => resolve(image)
-      image.onerror = () => reject(new Error("Unable to read this image."))
-      image.src = objectUrl
-    })
-  } finally {
-    URL.revokeObjectURL(objectUrl)
-  }
-}
-
-function canvasToBlob(canvas, type, quality) {
-  return new Promise(resolve => {
-    canvas.toBlob(resolve, type, quality)
-  })
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(new Error("Unable to preview this image."))
-    reader.readAsDataURL(blob)
-  })
 }
