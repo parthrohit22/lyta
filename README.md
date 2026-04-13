@@ -215,7 +215,12 @@ scripts/
 pages/
   index.html               Main UI shell
   styles.css               Visual system and responsive layout
+  app-core.js              Generated browser utility bundle
+  app-attachments.js       Attachment preparation in the browser
   app.js                   Client logic for chat, auth, uploads, board, settings
+
+pages-src/
+  app-core.ts              TypeScript source for app-core.js during frontend migration
 
 src/
   index.ts                 Worker entry
@@ -239,7 +244,8 @@ src/
 - Cloudflare Durable Objects
 - Cloudflare Workers AI
 - TypeScript
-- Vanilla HTML, CSS, and JavaScript
+- Vanilla HTML, CSS, and browser JavaScript
+- Incremental frontend TypeScript migration with generated assets in `pages/`
 - PDF.js
 - Mammoth
 - Server-Sent Events
@@ -257,6 +263,14 @@ src/
 npm install
 ```
 
+### Build Client Assets
+
+If you change files under `pages-src/`, rebuild the generated browser assets before running or deploying:
+
+```bash
+npm run build:client
+```
+
 ### Run
 
 ```bash
@@ -272,7 +286,10 @@ Open:
 Current lightweight checks:
 
 ```bash
+npm run build:client
+node --check pages/app-core.js
 node --check pages/app.js
+node --check pages/app-attachments.js
 ./node_modules/.bin/tsc --noEmit
 ```
 
