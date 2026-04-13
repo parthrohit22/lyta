@@ -1,0 +1,101 @@
+<svg width="1600" height="960" viewBox="0 0 1600 960" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="84" x2="1450" y2="900" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8EFE3"/>
+      <stop offset="1" stop-color="#ECE1D2"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFFDF8"/>
+      <stop offset="1" stop-color="#FFF6EC"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="2000" height="1200" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="26" flood-color="#252825" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="960" rx="40" fill="url(#bg)"/>
+  <circle cx="144" cy="180" r="160" fill="#C35D3F" fill-opacity="0.10"/>
+  <circle cx="1476" cy="166" r="210" fill="#1F6B72" fill-opacity="0.10"/>
+  <circle cx="1378" cy="822" r="150" fill="#C35D3F" fill-opacity="0.08"/>
+
+  <g filter="url(#shadow)">
+    <rect x="70" y="64" width="1460" height="832" rx="34" fill="#FFFDF8"/>
+  </g>
+
+  <rect x="102" y="96" width="304" height="768" rx="30" fill="#FAF5EC" stroke="#E7D7C7"/>
+  <rect x="440" y="96" width="740" height="768" rx="30" fill="#FFFDF8" stroke="#E7D7C7"/>
+  <rect x="1206" y="96" width="292" height="768" rx="30" fill="#FFF8EF" stroke="#E7D7C7"/>
+
+  <rect x="130" y="126" width="98" height="38" rx="19" fill="#FFF2E4" stroke="#E7D6C6"/>
+  <text x="179" y="151" text-anchor="middle" fill="#1D1F1D" font-family="Space Grotesk, Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="4">LYTA</text>
+  <text x="130" y="208" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="34" font-weight="800">Workspace</text>
+  <text x="130" y="242" fill="#656863" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="500">Guest access now, private sync after sign-in.</text>
+  <rect x="130" y="278" width="248" height="46" rx="23" fill="#C35D3F"/>
+  <text x="254" y="307" text-anchor="middle" fill="#FFF7F0" font-family="Manrope, Arial, sans-serif" font-size="19" font-weight="700">New Chat</text>
+
+  <text x="130" y="376" fill="#7B7F79" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">THREADS</text>
+  <rect x="130" y="402" width="248" height="88" rx="24" fill="#FFFDF8" stroke="#E7D7C7"/>
+  <text x="158" y="442" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="22" font-weight="700">Vector Search</text>
+  <text x="158" y="470" fill="#656863" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Citations from your uploaded notes</text>
+  <rect x="130" y="506" width="248" height="88" rx="24" fill="#FFF6EE" stroke="#E8D5C5"/>
+  <text x="158" y="546" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="22" font-weight="700">Project Plan</text>
+  <text x="158" y="574" fill="#656863" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Deep mode with board export</text>
+  <rect x="130" y="610" width="248" height="88" rx="24" fill="#EFF7F6" stroke="#D2E7E4"/>
+  <text x="158" y="650" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="22" font-weight="700">System Review</text>
+  <text x="158" y="678" fill="#656863" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Reusable docs across sessions</text>
+
+  <rect x="468" y="122" width="684" height="110" rx="28" fill="#FFF8EF" stroke="#E7D7C7"/>
+  <text x="500" y="160" fill="#7A7E78" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">WORKSPACE</text>
+  <text x="500" y="202" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="34" font-weight="800">Source-aware answers for real work</text>
+  <text x="500" y="228" fill="#656863" font-family="Manrope, Arial, sans-serif" font-size="18" font-weight="500">Modes, guest chats, private sync, and cleaner board-ready output.</text>
+
+  <rect x="500" y="274" width="116" height="38" rx="19" fill="#F0F6F5" stroke="#D1E5E3"/>
+  <text x="558" y="299" text-anchor="middle" fill="#1F6B72" font-family="Manrope, Arial, sans-serif" font-size="18" font-weight="700">Instant</text>
+  <rect x="628" y="274" width="104" height="38" rx="19" fill="#1F6B72"/>
+  <text x="680" y="299" text-anchor="middle" fill="#F7FBFB" font-family="Manrope, Arial, sans-serif" font-size="18" font-weight="700">Deep</text>
+  <rect x="744" y="274" width="128" height="38" rx="19" fill="#FFF0E3" stroke="#E8D3C0"/>
+  <text x="808" y="299" text-anchor="middle" fill="#C35D3F" font-family="Manrope, Arial, sans-serif" font-size="18" font-weight="700">Creative</text>
+
+  <rect x="500" y="338" width="612" height="148" rx="30" fill="#FFF4E8" stroke="#E8D5C3"/>
+  <text x="530" y="382" fill="#7A7E78" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">LYTA</text>
+  <text x="530" y="428" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="27" font-weight="700">I found three design risks in the uploaded architecture doc.</text>
+  <text x="530" y="464" fill="#525651" font-family="Manrope, Arial, sans-serif" font-size="19" font-weight="500">State is well partitioned, but retrieval ordering and guest expiry need tighter handling.</text>
+
+  <rect x="554" y="500" width="172" height="34" rx="17" fill="#FFF9F2" stroke="#E9DACC"/>
+  <text x="640" y="522" text-anchor="middle" fill="#6A6E68" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="500">cite: workspace.ts</text>
+  <rect x="738" y="500" width="212" height="34" rx="17" fill="#FFF9F2" stroke="#E9DACC"/>
+  <text x="844" y="522" text-anchor="middle" fill="#6A6E68" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="500">follow-up: tighten expiry</text>
+
+  <rect x="570" y="560" width="542" height="126" rx="30" fill="#1F6B72"/>
+  <text x="600" y="606" fill="#E8F6F5" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">YOU</text>
+  <text x="600" y="652" fill="#F7FBFB" font-family="Manrope, Arial, sans-serif" font-size="25" font-weight="700">Turn that into recruiter-ready language.</text>
+
+  <rect x="500" y="726" width="612" height="96" rx="28" fill="#FFF8EF" stroke="#E7D7C7"/>
+  <text x="532" y="780" fill="#5E625D" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="500">Upload files, search your library, and switch into focus mode.</text>
+  <rect x="984" y="748" width="100" height="50" rx="25" fill="#C35D3F"/>
+  <text x="1034" y="780" text-anchor="middle" fill="#FFF7F0" font-family="Manrope, Arial, sans-serif" font-size="20" font-weight="700">Send</text>
+
+  <text x="1234" y="144" fill="#7A7E78" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">OUTPUT BOARD</text>
+  <text x="1234" y="186" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="30" font-weight="800">Polished Deliverable</text>
+  <text x="1234" y="214" fill="#676A64" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Pin the best answer and keep the chat focused.</text>
+
+  <rect x="1234" y="252" width="236" height="188" rx="28" fill="#FFFFFF" stroke="#E7D7C7"/>
+  <text x="1260" y="294" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="23" font-weight="700">Why this system stands out</text>
+  <text x="1260" y="334" fill="#5E625D" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Explicit state boundaries and source-aware retrieval.</text>
+
+  <rect x="1234" y="462" width="236" height="132" rx="28" fill="#FFF4E8" stroke="#E8D4C2"/>
+  <text x="1260" y="504" fill="#7A7E78" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="500" letter-spacing="2">LIBRARY</text>
+  <text x="1260" y="544" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="22" font-weight="700">design-review.pdf</text>
+  <text x="1260" y="572" fill="#5E625D" font-family="Manrope, Arial, sans-serif" font-size="17" font-weight="500">Reusable across chats</text>
+
+  <rect x="1234" y="616" width="236" height="180" rx="28" fill="#EEF7F6" stroke="#D2E7E4"/>
+  <text x="1260" y="658" fill="#7A7E78" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="500" letter-spacing="2">SETTINGS</text>
+  <text x="1260" y="698" fill="#1D1F1D" font-family="Manrope, Arial, sans-serif" font-size="22" font-weight="700">Theme controls</text>
+  <rect x="1260" y="722" width="36" height="36" rx="18" fill="#F2EDE3" stroke="#DFCDBD"/>
+  <rect x="1312" y="722" width="36" height="36" rx="18" fill="#FAF5EC" stroke="#DFCDBD"/>
+  <rect x="1364" y="722" width="36" height="36" rx="18" fill="#1F6B72"/>
+  <rect x="1416" y="722" width="36" height="36" rx="18" fill="#C35D3F"/>
+
+  <rect x="500" y="850" width="970" height="2" fill="#E8D8CA"/>
+  <text x="500" y="886" fill="#6B6E69" font-family="IBM Plex Mono, monospace" font-size="16" font-weight="500" letter-spacing="2">EDGE-NATIVE AI WORKSPACE  ·  UNIQUE PRODUCT SURFACES  ·  PORTFOLIO-READY SYSTEM DESIGN</text>
+</svg>
