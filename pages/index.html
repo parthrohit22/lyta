@@ -1,55 +1,294 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>LYTA - Edge AI</title>
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lyta</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/styles.css">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" defer></script>
+<script src="https://unpkg.com/mammoth/mammoth.browser.min.js" defer></script>
+<script src="/app.js" defer></script>
 </head>
-
 <body>
 
-<div id="app">
+<div id="appShell">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <div>
+        <div class="brand-mark">LYTA</div>
+        <p class="meta-label" id="workspaceBadge">Private Workspace</p>
+      </div>
+      <button id="newChat" class="primary-button" type="button">New Chat</button>
+    </div>
 
-<div id="sidebar">
+    <div class="sidebar-heading">
+      <span class="sidebar-title">Chats</span>
+      <span class="sidebar-note" id="sessionCount">0 threads</span>
+    </div>
 
-<div id="logo">LYTA</div>
+    <div id="sessions"></div>
+  </aside>
 
-<button id="newChat">+ New Chat</button>
+  <main id="workspace">
+    <header id="topbar">
+      <div class="topbar-copy">
+        <p class="meta-label">Workspace</p>
+        <h1 id="chatTitle">New Chat</h1>
+        <p id="topbarSubtitle">Private to your account, synced across refreshes.</p>
+      </div>
 
-<div id="sessions"></div>
+      <div class="topbar-actions">
+        <label class="switch-row" for="focusModeToggle">
+          <span>Focus</span>
+          <input id="focusModeToggle" type="checkbox">
+          <span class="switch-control" aria-hidden="true"></span>
+        </label>
 
+        <button id="boardToggle" class="secondary-button" type="button">Board</button>
+        <button id="resetChat" class="secondary-button" type="button">Clear</button>
+
+        <button id="profileButton" class="profile-button" type="button">
+          <span class="profile-avatar" id="profileAvatar">LY</span>
+          <span class="profile-copy">
+            <strong id="profileButtonName">Profile</strong>
+            <span id="profileButtonWorkspace">Settings</span>
+          </span>
+        </button>
+      </div>
+    </header>
+
+    <div id="workspaceGrid">
+      <section id="chatPanel">
+        <section id="conversationSurface">
+          <div id="emptyState">
+            <p class="meta-label">Minimal by design</p>
+            <h2>Ask something substantial.</h2>
+            <p>
+              Bring in images or documents, switch response modes, and let Lyta pull from your personal library with source-aware answers.
+            </p>
+
+            <div class="suggestion-row">
+              <button class="suggestion-chip" type="button" data-prompt="Summarize the core argument from these notes in plain language.">Summarize notes</button>
+              <button class="suggestion-chip" type="button" data-prompt="Review this system design and point out architectural risks.">Review architecture</button>
+              <button class="suggestion-chip" type="button" data-prompt="Turn this material into a polished project explanation for recruiters.">Portfolio rewrite</button>
+            </div>
+          </div>
+
+          <div id="chat"></div>
+
+          <div id="typing" hidden>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span>Lyta is thinking</span>
+          </div>
+        </section>
+
+        <form id="composer">
+          <input id="filePicker" type="file" multiple accept="image/*,.pdf,.docx,.txt,.md,.csv,.json,.html,.htm,.xml" hidden>
+
+          <div id="composerShell">
+            <div id="attachmentTray"></div>
+
+            <div class="composer-row">
+              <button id="attachBtn" class="secondary-button" type="button">Upload</button>
+              <button id="libraryBtn" class="secondary-button" type="button">Library</button>
+              <label class="composer-input" for="message">
+                <textarea id="message" rows="1" placeholder="Ask Lyta to think through something real..."></textarea>
+              </label>
+              <button id="sendButton" class="primary-button" type="submit">Send</button>
+            </div>
+
+            <div class="composer-footer">
+              <div class="mode-selector" aria-label="Response mode">
+                <button class="mode-button" type="button" data-chat-mode="instant">Instant</button>
+                <button class="mode-button" type="button" data-chat-mode="deep">Deep</button>
+                <button class="mode-button" type="button" data-chat-mode="creative">Creative</button>
+              </div>
+              <span id="composerStatus">Uploads sync into your account library automatically.</span>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <aside id="artifactPanel">
+        <div class="panel-header">
+          <div>
+            <p class="meta-label">Output Board</p>
+            <h2 id="boardTitle">Select a response</h2>
+          </div>
+
+          <div class="panel-actions">
+            <button id="copyBoard" class="secondary-button" type="button">Copy</button>
+            <button id="downloadBoard" class="secondary-button" type="button">Download</button>
+          </div>
+        </div>
+
+        <div id="boardState" class="panel-empty">
+          Click an assistant response to pin it here for cleaner reading, copying, and showcasing.
+        </div>
+
+        <div id="boardBody" hidden></div>
+        <div id="boardSources" hidden></div>
+      </aside>
+    </div>
+  </main>
 </div>
 
+<div id="settingsOverlay" hidden></div>
 
-<div id="main">
+<aside id="settingsPanel" aria-hidden="true">
+  <div class="settings-header">
+    <div>
+      <p class="meta-label">Profile, Theme, Library</p>
+      <h2>Workspace Settings</h2>
+    </div>
+    <button id="closeSettings" class="secondary-button" type="button">Close</button>
+  </div>
 
-<div id="topbar">
-<div>Edge AI Assistant</div>
+  <div class="settings-body">
+    <section class="settings-section">
+      <div class="section-header">
+        <h3>Profile</h3>
+        <p id="accountHint">Guest chats and files are temporary until you sign in.</p>
+      </div>
 
-<div>
-<button onclick="toggleDark()">Theme</button>
-<button onclick="resetSession()">Reset</button>
-</div>
-</div>
+      <label class="settings-field">
+        <span>Name</span>
+        <input id="profileNameInput" type="text" maxlength="40" placeholder="Your name">
+      </label>
 
+      <label class="settings-field">
+        <span>Workspace</span>
+        <input id="profileWorkspaceInput" type="text" maxlength="50" placeholder="Workspace label">
+      </label>
 
-<div id="chat"></div>
+      <div class="profile-meta-card">
+        <span class="meta-label" id="storageModeLabel">Guest Mode</span>
+        <strong id="profileEmailText">Temporary session</strong>
+      </div>
 
+      <div class="settings-actions">
+        <button id="authActionButton" class="primary-button" type="button">Sign In To Save</button>
+        <button id="saveProfile" class="primary-button" type="button">Save Profile</button>
+        <button id="logoutButton" class="secondary-button" type="button">Log Out</button>
+      </div>
+      <p id="profileStatus" class="settings-note">Guest settings last for the current session only.</p>
+    </section>
 
-<div id="controls">
-<textarea id="message" rows="1" placeholder="Ask something..."></textarea>
-<button onclick="send()">Send</button>
-<span id="typing">assistant thinking...</span>
-</div>
+    <section class="settings-section">
+      <div class="section-header">
+        <h3>Theme</h3>
+        <p>Pick colors for each surface separately.</p>
+      </div>
 
-</div>
+      <div class="theme-presets">
+        <button class="preset-button" type="button" data-theme-preset="atelier">Atelier</button>
+        <button class="preset-button" type="button" data-theme-preset="harbor">Harbor</button>
+        <button class="preset-button" type="button" data-theme-preset="linen">Linen</button>
+      </div>
 
-</div>
+      <div class="theme-grid">
+        <label class="theme-control">
+          <span>Page</span>
+          <input type="color" data-theme-input="background">
+        </label>
+        <label class="theme-control">
+          <span>Sidebar</span>
+          <input type="color" data-theme-input="sidebar">
+        </label>
+        <label class="theme-control">
+          <span>Header</span>
+          <input type="color" data-theme-input="topbar">
+        </label>
+        <label class="theme-control">
+          <span>Chat</span>
+          <input type="color" data-theme-input="conversation">
+        </label>
+        <label class="theme-control">
+          <span>Composer</span>
+          <input type="color" data-theme-input="composer">
+        </label>
+        <label class="theme-control">
+          <span>Assistant</span>
+          <input type="color" data-theme-input="assistantBubble">
+        </label>
+        <label class="theme-control">
+          <span>User</span>
+          <input type="color" data-theme-input="userBubble">
+        </label>
+        <label class="theme-control">
+          <span>Accent</span>
+          <input type="color" data-theme-input="accent">
+        </label>
+      </div>
 
-<script src="/app.js"></script>
+      <button id="resetTheme" class="secondary-button full-width" type="button">Reset Colors</button>
+    </section>
+
+    <section class="settings-section" id="librarySection">
+      <div class="section-header">
+        <h3>Library</h3>
+        <p id="libraryHint">Files can be reused across this session. Sign in to store them in your account.</p>
+      </div>
+
+      <div class="settings-actions">
+        <button id="libraryUploadButton" class="primary-button" type="button">Add Files</button>
+      </div>
+
+      <div id="libraryStats" class="library-stats">0 saved files</div>
+      <div id="libraryList" class="library-list"></div>
+      <p id="libraryStatus" class="settings-note">Documents with readable text become searchable for citations.</p>
+    </section>
+  </div>
+</aside>
+
+<div id="authOverlay" hidden></div>
+
+<section id="authModal" hidden aria-hidden="true">
+  <div class="auth-card">
+    <div class="auth-header">
+      <div>
+        <p class="meta-label">Account</p>
+        <h2>Save This Workspace</h2>
+      </div>
+      <button id="closeAuthModal" class="secondary-button" type="button">Close</button>
+    </div>
+
+    <p class="auth-copy">
+      Use Lyta immediately as a guest. Sign in only when you want chats, files, and preferences stored to your account.
+    </p>
+
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab is-active" data-auth-mode="register">Create Account</button>
+      <button type="button" class="auth-tab" data-auth-mode="login">Sign In</button>
+    </div>
+
+    <form id="authForm" class="auth-form">
+      <label class="settings-field" id="authNameField">
+        <span>Name</span>
+        <input id="authName" type="text" maxlength="40" placeholder="Your name">
+      </label>
+
+      <label class="settings-field">
+        <span>Email</span>
+        <input id="authEmail" type="email" maxlength="120" autocomplete="email" placeholder="you@example.com" required>
+      </label>
+
+      <label class="settings-field">
+        <span>Password</span>
+        <input id="authPassword" type="password" minlength="8" autocomplete="current-password" placeholder="At least 8 characters" required>
+      </label>
+
+      <button id="authSubmit" class="primary-button auth-submit" type="submit">Create Workspace</button>
+      <p id="authStatus" class="settings-note">Account storage keeps chats private to you and available after you come back.</p>
+    </form>
+  </div>
+</section>
 
 </body>
 </html>

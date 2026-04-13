@@ -2,7 +2,12 @@ import { createEmbedding } from "./embeddings"
 import { searchVectors } from "../retrieval/vectorStore"
 import { knowledgeBase } from "../docs/knowledge"
 
-let embeddedDocs: any[] | null = null
+interface EmbeddedKnowledgeDoc {
+  text: string
+  vector: number[]
+}
+
+let embeddedDocs: EmbeddedKnowledgeDoc[] | null = null
 
 async function embedDocs(env: any) {
   if (embeddedDocs) return embeddedDocs
@@ -11,7 +16,7 @@ async function embedDocs(env: any) {
 
   for (const doc of knowledgeBase) {
     const vector = await createEmbedding(env, doc.text)
-    embeddedDocs.push({ text: doc, vector })
+    embeddedDocs.push({ text: doc.text, vector })
   }
 
   return embeddedDocs

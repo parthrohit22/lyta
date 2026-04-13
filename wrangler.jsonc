@@ -12,6 +12,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["SessionIndex"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["AuthDirectory", "Workspace"]
     }
   ],
 
@@ -24,6 +28,14 @@
       {
         "name": "SESSION_INDEX",
         "class_name": "SessionIndex"
+      },
+      {
+        "name": "AUTH_DIRECTORY",
+        "class_name": "AuthDirectory"
+      },
+      {
+        "name": "WORKSPACE",
+        "class_name": "Workspace"
       }
     ]
   },

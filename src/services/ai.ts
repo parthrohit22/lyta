@@ -1,14 +1,53 @@
-const MODEL = "@cf/meta/llama-3-8b-instruct";
+import type { ChatMode } from "../chat/messages"
 
-export async function runAI(env: any, messages: any[]) {
-  return env.AI.run(MODEL, {
-    messages,
-  });
+const MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+
+interface RunAIOptions {
+  mode?: ChatMode
 }
 
-export async function runAIStream(env: any, messages: any[]) {
+function getModelSettings(mode: ChatMode | undefined) {
+  switch (mode) {
+    case "deep":
+      return {
+        temperature: 0.35,
+        top_p: 0.85,
+        max_tokens: 1800
+      }
+    case "creative":
+      return {
+        temperature: 0.9,
+        top_p: 0.95,
+        max_tokens: 1400
+      }
+    default:
+      return {
+        temperature: 0.45,
+        top_p: 0.9,
+        max_tokens: 1100
+      }
+  }
+}
+
+export async function runAI(
+  env: any,
+  messages: any[],
+  options?: RunAIOptions
+) {
   return env.AI.run(MODEL, {
     messages,
-    stream: true,
-  });
+    ...getModelSettings(options?.mode)
+  })
+}
+
+export async function runAIStream(
+  env: any,
+  messages: any[],
+  options?: RunAIOptions
+) {
+  return env.AI.run(MODEL, {
+    messages,
+    ...getModelSettings(options?.mode),
+    stream: true
+  })
 }
