@@ -1,4 +1,6 @@
+import type { Env } from "../index"
 import { runAI, runAIStream } from "../services/ai"
+import type { AiChatMessage } from "../services/ai"
 import { retrieveContext } from "../services/retriever"
 import {
   buildConversationMessages,
@@ -18,14 +20,31 @@ import {
 
 const MAX_RECENT = 6
 const encoder = new TextEncoder()
+const JSON_HEADERS = {
+  "Content-Type": "application/json"
+}
+
+function systemMessage(content: string): AiChatMessage {
+  return {
+    role: "system",
+    content
+  }
+}
+
+function userPromptMessage(content: string): AiChatMessage {
+  return {
+    role: "user",
+    content
+  }
+}
 
 export class Conversation {
 
   state: DurableObjectState
-  env: any
+  env: Env
   private lock: Promise<void> = Promise.resolve()
 
-  constructor(state: DurableObjectState, env: any){
+  constructor(state: DurableObjectState, env: Env){
     this.state = state
     this.env = env
   }
@@ -210,7 +229,7 @@ export class Conversation {
   }
 
   private async streamChat(input: {
-    messages: any[]
+    messages: AiChatMessage[]
     mode: ChatMessageRecord["mode"]
     recent: ChatMessageRecord[]
     userMessage: ChatMessageRecord
@@ -334,11 +353,9 @@ export class Conversation {
     if(recent.length > MAX_RECENT){
 
       const summaryPrompt = [
-        {
-          role: "system",
-          content:
-            "Summarize the following conversation, preserving user preferences, uploaded file context, cited sources, and unresolved asks."
-        },
+        systemMessage(
+          "Summarize the following conversation, preserving user preferences, uploaded file context, cited sources, and unresolved asks."
+        ),
         ...buildSummaryMessages(recent)
       ]
 
@@ -366,15 +383,10 @@ export class Conversation {
 
   private async generateConversationTitle(message: ChatMessageRecord) {
     const titlePrompt = [
-      {
-        role: "system",
-        content:
-          "Return only a 2 or 3 word chat title. Use title case. No punctuation. No quotes."
-      },
-      {
-        role: "user",
-        content: buildTitleSource(message)
-      }
+      systemMessage(
+        "Return only a 2 or 3 word chat title. Use title case. No punctuation. No quotes."
+      ),
+      userPromptMessage(buildTitleSource(message))
     ]
 
     const titleResult =
@@ -396,21 +408,16 @@ export class Conversation {
     mode: ChatMessageRecord["mode"]
   ) {
     const prompt = [
-      {
-        role: "system",
-        content:
-          "Return a JSON array with exactly 3 concise follow-up prompts. Each prompt should sound natural, stay under 12 words, and avoid numbering or commentary."
-      },
-      {
-        role: "user",
-        content: [
-          "Latest user request:",
-          buildTitleSource(userMessage),
-          "",
-          "Assistant answer:",
-          assistantText.slice(0, 1800)
-        ].join("\n")
-      }
+      systemMessage(
+        "Return a JSON array with exactly 3 concise follow-up prompts. Each prompt should sound natural, stay under 12 words, and avoid numbering or commentary."
+      ),
+      userPromptMessage([
+        "Latest user request:",
+        buildTitleSource(userMessage),
+        "",
+        "Assistant answer:",
+        assistantText.slice(0, 1800)
+      ].join("\n"))
     ]
 
     const result =
@@ -429,29 +436,24 @@ export class Conversation {
     sessionId: string,
     title: string
   ) {
-    if(!userId || !sessionId || !this.env.WORKSPACE){
-      return
-    }
-
-    const workspace =
-      this.env.WORKSPACE.get(
-        this.env.WORKSPACE.idFromName(userId)
-      )
-
-    await workspace.fetch("https://internal/sessions/rename", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        id: sessionId,
-        title
-      })
+    await this.updateWorkspaceSession(userId, "/sessions/rename", {
+      id: sessionId,
+      title
     })
   }
 
   private async touchWorkspaceSession(userId: string, sessionId: string) {
-    if(!userId || !sessionId || !this.env.WORKSPACE){
+    await this.updateWorkspaceSession(userId, "/sessions/touch", {
+      id: sessionId
+    })
+  }
+
+  private async updateWorkspaceSession(
+    userId: string,
+    path: "/sessions/rename" | "/sessions/touch",
+    body: Record<string, string>
+  ) {
+    if(!userId || !body.id || !this.env.WORKSPACE){
       return
     }
 
@@ -460,14 +462,10 @@ export class Conversation {
         this.env.WORKSPACE.idFromName(userId)
       )
 
-    await workspace.fetch("https://internal/sessions/touch", {
+    await workspace.fetch(`https://internal${path}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        id: sessionId
-      })
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body)
     })
   }
 }

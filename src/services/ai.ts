@@ -1,6 +1,21 @@
+import type { Env } from "../index"
 import type { ChatMode } from "../chat/messages"
 
 const MODEL = "@cf/meta/llama-4-scout-17b-16e-instruct"
+
+export interface AiChatMessage {
+  role: "system" | "user" | "assistant"
+  content:
+    | string
+    | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >
+}
+
+interface AiTextResponse {
+  response?: string
+}
 
 interface RunAIOptions {
   mode?: ChatMode
@@ -30,24 +45,24 @@ function getModelSettings(mode: ChatMode | undefined) {
 }
 
 export async function runAI(
-  env: any,
-  messages: any[],
+  env: Pick<Env, "AI">,
+  messages: AiChatMessage[],
   options?: RunAIOptions
 ) {
   return env.AI.run(MODEL, {
     messages,
     ...getModelSettings(options?.mode)
-  })
+  }) as Promise<AiTextResponse>
 }
 
 export async function runAIStream(
-  env: any,
-  messages: any[],
+  env: Pick<Env, "AI">,
+  messages: AiChatMessage[],
   options?: RunAIOptions
 ) {
   return env.AI.run(MODEL, {
     messages,
     ...getModelSettings(options?.mode),
     stream: true
-  })
+  }) as Promise<ReadableStream<Uint8Array>>
 }

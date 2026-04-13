@@ -1,4 +1,5 @@
 import type { LibraryCitation } from "../library/chunks"
+import type { AiChatMessage } from "../services/ai"
 
 const MAX_MESSAGE_LENGTH = 4000
 const MAX_ATTACHMENTS = 4
@@ -67,6 +68,13 @@ const MODE_SYSTEM_PROMPTS: Record<ChatMode, string> = {
     "Mode: Deep. Think carefully, reason through tradeoffs, and give a more rigorous answer. State key assumptions, catch edge cases, and end with a concise recommendation.",
   creative:
     "Mode: Creative. Keep the answer useful and grounded, but explore fresh angles, stronger phrasing, alternative directions, or more imaginative options where appropriate."
+}
+
+function systemMessage(content: string): AiChatMessage {
+  return {
+    role: "system",
+    content
+  }
 }
 
 export interface ChatAttachment {
@@ -231,38 +239,23 @@ export function buildConversationMessages(input: {
   mode: ChatMode
   summary?: string
   retrievedContext?: string
-}) {
+}): AiChatMessage[] {
   return [
-    {
-      role: "system",
-      content:
-        "You are LYTA, an edge-native AI workspace running on Cloudflare Workers. Deliver polished, practical answers with GPT-style clarity. Lead with the most useful answer, adapt depth to the task, use clean structure when it helps, and avoid filler. You can analyze attached images and extracted document text. If a document excerpt appears partial or truncated, say so clearly and work from the available material. When source blocks labelled like [Source 1] are provided, cite them inline only when they directly support the statement."
-    },
-    {
-      role: "system",
-      content: MODE_SYSTEM_PROMPTS[input.mode]
-    },
+    systemMessage(
+      "You are LYTA, an edge-native AI workspace running on Cloudflare Workers. Deliver polished, practical answers with GPT-style clarity. Lead with the most useful answer, adapt depth to the task, use clean structure when it helps, and avoid filler. You can analyze attached images and extracted document text. If a document excerpt appears partial or truncated, say so clearly and work from the available material. When source blocks labelled like [Source 1] are provided, cite them inline only when they directly support the statement."
+    ),
+    systemMessage(MODE_SYSTEM_PROMPTS[input.mode]),
     ...(input.retrievedContext
-      ? [
-          {
-            role: "system",
-            content: `Relevant project context:\n${input.retrievedContext}`
-          }
-        ]
+      ? [systemMessage(`Relevant project context:\n${input.retrievedContext}`)]
       : []),
     ...(input.summary
-      ? [
-          {
-            role: "system",
-            content: `Conversation summary:\n${input.summary}`
-          }
-        ]
+      ? [systemMessage(`Conversation summary:\n${input.summary}`)]
       : []),
     ...input.recent.map(toAiMessage)
   ]
 }
 
-export function buildSummaryMessages(recent: ChatMessageRecord[]) {
+export function buildSummaryMessages(recent: ChatMessageRecord[]): AiChatMessage[] {
   return recent.map(message => ({
     role: message.role,
     content: buildTextOnlyMessage(message, MAX_SUMMARY_DOC_LENGTH)
@@ -400,7 +393,7 @@ function normalizeAttachment(attachment: ChatAttachment): ChatAttachment {
   }
 }
 
-function toAiMessage(message: ChatMessageRecord) {
+function toAiMessage(message: ChatMessageRecord): AiChatMessage {
   if (message.role === "assistant") {
     return {
       role: message.role,
@@ -430,9 +423,9 @@ function toAiMessage(message: ChatMessageRecord) {
         text: prompt
       },
       ...images.map(image => ({
-        type: "image_url",
+        type: "image_url" as const,
         image_url: {
-          url: image.dataUrl
+          url: image.dataUrl || ""
         }
       }))
     ]

@@ -43,17 +43,7 @@ interface Principal {
 }
 
 export async function router(request: Request, env: Env): Promise<Response> {
-
   const url = new URL(request.url)
-
-  console.log(
-    JSON.stringify({
-      path: url.pathname,
-      method: request.method,
-      ip: request.headers.get("CF-Connecting-IP"),
-      time: new Date().toISOString()
-    })
-  )
 
   if (url.pathname === "/" && request.method === "GET") {
     return Response.json({
