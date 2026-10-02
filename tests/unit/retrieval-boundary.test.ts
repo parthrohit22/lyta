@@ -41,6 +41,26 @@ test("duplicate text keeps the citation bound to the selected stable chunk id", 
   })
 })
 
+test("zero-magnitude or invalid vectors do not produce NaN retrieval scores", () => {
+  const scored = buildLibrarySearchResult([0, 0], [{ id: "chunk-zero", fileId: "file-zero", fileName: "zero.txt", text: "zero vector", vector: [0, 0] }], 2)
+  assert.equal(scored.citations[0]?.fileId, "file-zero")
+  assert.equal(scored.citations[0]?.snippet, "zero vector")
+  assert.equal(scored.context.includes("zero vector"), true)
+
+  const mixed = buildLibrarySearchResult(
+    [1, 0],
+    [
+      { id: "chunk-zero", fileId: "file-zero", fileName: "zero.txt", text: "zero vector", vector: [0, 0] },
+      { id: "chunk-match", fileId: "file-match", fileName: "match.txt", text: "good match", vector: [1, 0] }
+    ],
+    2
+  )
+
+  assert.equal(mixed.citations[0]?.fileId, "file-match")
+  assert.equal(mixed.citations[0]?.snippet, "good match")
+  assert.ok(mixed.context.includes("good match"))
+})
+
 test("diagnostic metadata excludes prompt and file-body fields", () => {
   const original = console.error
   const entries: string[] = []
