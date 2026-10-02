@@ -42,7 +42,9 @@ export function searchVectors<T extends VectorDoc>(queryVector: number[], docume
   }
 
   const scored = documents
-    .filter((doc) => Array.isArray(doc.vector) && doc.vector.length === safeQuery.length && doc.vector.every((value) => Number.isFinite(value)))
+    .filter(
+      (doc) => Array.isArray(doc.vector) && doc.vector.length === safeQuery.length && doc.vector.every((value) => Number.isFinite(value))
+    )
     .map((doc) => ({
       ...doc,
       score: cosineSimilarity(safeQuery, doc.vector)

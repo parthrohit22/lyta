@@ -42,7 +42,11 @@ test("duplicate text keeps the citation bound to the selected stable chunk id", 
 })
 
 test("zero-magnitude or invalid vectors do not produce NaN retrieval scores", () => {
-  const scored = buildLibrarySearchResult([0, 0], [{ id: "chunk-zero", fileId: "file-zero", fileName: "zero.txt", text: "zero vector", vector: [0, 0] }], 2)
+  const scored = buildLibrarySearchResult(
+    [0, 0],
+    [{ id: "chunk-zero", fileId: "file-zero", fileName: "zero.txt", text: "zero vector", vector: [0, 0] }],
+    2
+  )
   assert.equal(scored.citations[0]?.fileId, "file-zero")
   assert.equal(scored.citations[0]?.snippet, "zero vector")
   assert.equal(scored.context.includes("zero vector"), true)
