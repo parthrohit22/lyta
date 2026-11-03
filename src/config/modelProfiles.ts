@@ -1,4 +1,6 @@
 import type { ChatMode } from "../chat/messages"
+import { resolveProfile, type ProfileResolution } from "../ai/registry"
+import type { ProductProfileId } from "../ai/types"
 
 export interface ModelProfile {
   /** Workers AI model id passed to env.AI.run(). */
@@ -20,62 +22,41 @@ export interface ModelProfile {
   }
 }
 
+/** Chat modes map onto product profiles; `deep` is the Deep Review profile. */
+export const MODE_PROFILES: Record<ChatMode, ProductProfileId> = {
+  instant: "instant",
+  deep: "deep-review",
+  creative: "creative"
+}
+
+export function toModelProfile(resolution: ProfileResolution): ModelProfile {
+  const { profile, primary, fallback } = resolution
+
+  return {
+    model: primary.model,
+    modelVersion: primary.version,
+    ...(fallback ? { fallbackModel: fallback.model } : {}),
+    ...profile.policy,
+    targets: { ...profile.targets }
+  }
+}
+
 /**
- * Single source of truth for per-mode model selection and policy. Changing a
- * value here changes production behavior for that mode's next request — see
- * RELEASE_CHECKLIST.md's AI-evaluation comparison step before promoting a
- * change, and eval/README.md for the pass-rate gate CI enforces.
+ * Per-mode model policy, derived from the provider/capability registry in
+ * src/ai/registry.ts. That registry is now the source of truth: change models,
+ * fallback order, or policy there. See RELEASE_CHECKLIST.md's AI-evaluation
+ * comparison step before promoting a change, and eval/README.md for the
+ * pass-rate gate CI enforces.
+ *
+ * This resolves with no per-request needs (no images, no external providers),
+ * which is what direct `callWithPolicy(route, getModelProfile(mode), …)`
+ * callers get. src/services/ai.ts re-resolves per request so, for example, an
+ * image message never falls back to a text-only model.
  */
 export const MODEL_PROFILES: Record<ChatMode, ModelProfile> = {
-  instant: {
-    model: "@cf/meta/llama-4-scout-17b-16e-instruct",
-    modelVersion: "llama-4-scout-17b-16e-instruct",
-    fallbackModel: "@cf/meta/llama-3.1-8b-instruct",
-    timeoutMs: 12_000,
-    maxRetries: 1,
-    temperature: 0.45,
-    top_p: 0.9,
-    max_tokens: 1100,
-    targets: {
-      latencyMsP50: 2_000,
-      latencyMsP95: 6_000,
-      estimatedCostPerRequestUsd: 0.002,
-      qualityNotes: "Quick, direct answers for short technical questions. Some depth/nuance loss is acceptable for speed."
-    }
-  },
-  deep: {
-    model: "@cf/meta/llama-4-scout-17b-16e-instruct",
-    modelVersion: "llama-4-scout-17b-16e-instruct",
-    fallbackModel: "@cf/meta/llama-3.1-8b-instruct",
-    timeoutMs: 25_000,
-    maxRetries: 1,
-    temperature: 0.35,
-    top_p: 0.85,
-    max_tokens: 1800,
-    targets: {
-      latencyMsP50: 5_000,
-      latencyMsP95: 15_000,
-      estimatedCostPerRequestUsd: 0.004,
-      qualityNotes:
-        "Deep Review: prioritizes evidence grounding and completeness over speed. Every claim should be traceable to retrieved context or explicitly flagged as unsupported."
-    }
-  },
-  creative: {
-    model: "@cf/meta/llama-4-scout-17b-16e-instruct",
-    modelVersion: "llama-4-scout-17b-16e-instruct",
-    fallbackModel: "@cf/meta/llama-3.1-8b-instruct",
-    timeoutMs: 18_000,
-    maxRetries: 1,
-    temperature: 0.9,
-    top_p: 0.95,
-    max_tokens: 1400,
-    targets: {
-      latencyMsP50: 3_500,
-      latencyMsP95: 10_000,
-      estimatedCostPerRequestUsd: 0.003,
-      qualityNotes: "Exploratory/brainstorming responses. Not currently in #6's required scope; documented for consistency."
-    }
-  }
+  instant: toModelProfile(resolveProfile(MODE_PROFILES.instant)),
+  deep: toModelProfile(resolveProfile(MODE_PROFILES.deep)),
+  creative: toModelProfile(resolveProfile(MODE_PROFILES.creative))
 }
 
 export function getModelProfile(mode: ChatMode): ModelProfile {

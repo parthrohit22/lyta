@@ -1,4 +1,5 @@
 import type { Env } from "./index"
+import { describeProfiles } from "./ai/catalog"
 import { safeJson } from "./utils/safeJson"
 import {
   buildRetrievalQuery,
@@ -59,6 +60,10 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       ok: true,
       service: "LYTA"
     })
+  }
+
+  if (url.pathname === "/models/profiles" && request.method === "GET") {
+    return Response.json(describeProfiles(env), { headers: { "Cache-Control": "no-store" } })
   }
 
   const ip = request.headers.get("CF-Connecting-IP") || "unknown"
