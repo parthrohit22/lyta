@@ -5,14 +5,14 @@
 | Issue | [#15](https://github.com/parthrohit22/lyta/issues/15) (tracking: #17) |
 | Status | **Draft for review. Design only, no implementation.** |
 | Date | 2026-11-03 |
-| Depends on | #13 (provider/capability registry), #14 (AI Gateway control plane) |
+| Depends on | #13 (provider/capability registry) and #14 (AI Gateway control plane), as implemented in PR #32. Section 4 uses that PR's names |
 | Author's caveat | The threat model below is the author's own. Acceptance criterion 7 requires a review by someone else before any user-managed key is enabled in production (see [section 13](#13-acceptance-criteria-map)). |
 
 ## 0. Summary of the decisions
 
 1. **Credentials live in one place: a per-workspace `ProviderVault` Durable Object**, encrypted at the application layer (AES-256-GCM, per-workspace data-encryption key, wrapped by a key-encryption key held as a Workers Secret). The `Workspace` and `Conversation` objects, R2, logs and the browser never hold a credential or a decryption key.
 2. **The vault makes the outbound call itself.** The decrypted key never leaves the vault's isolate: `Conversation` hands the vault a neutral, credential-free request and gets a response stream back. This is the main design choice; it costs one extra hop and buys a small, auditable surface (section 6.3).
-3. **All BYOP traffic goes through the AI Gateway path from #14.** BYOP is a new *credential source* and a new *registry overlay* in #13, not a parallel code path (section 4).
+3. **BYOP is a new path through the existing #13/#14 gate, not a parallel one.** It adds a `workspace-vault` provider id, a `credentialSource` on registry entries and a workspace-aware step in `resolveProfile()`. Calls still go through `runAI`, `callWithPolicy`, `createGatewayExternalProvider` and `buildGatewayOptions` from PR #32, behind the same `AI_EXTERNAL_PROVIDERS` and gateway conditions (section 4).
 4. **Consent is enforced server-side, in the vault, at egress time** — not only in the UI. No matching consent record for the current policy text and content classes means no outbound request.
 5. **Rollout is two steps**: Phase 1 is operator-provisioned (no key ever typed into the browser); Phase 2 is a narrow, allowlisted user beta where the key is entered once over HTTPS and never returned.
 6. **Honest limit**: envelope encryption protects against storage-level exposure and cross-workspace bugs. It does **not** protect against malicious Worker code, a compromised deploy token, or Cloudflare account takeover, because the Worker must be able to decrypt in order to work. Section 5.3 states this plainly and section 11 is written around it.
@@ -30,10 +30,10 @@ This section is grounded in the code at `main` (commit `7c1dd28`), not in the ro
 | Cookies | `HttpOnly; SameSite=Lax; Secure` when HTTPS (`src/utils/cookies.ts`). | Cookie not readable from JS. `Lax` stops most cross-site POSTs but is not a CSRF design; BYOP mutations add an `Origin` check and step-up auth. |
 | Workspace state | `Workspace` DO stores profile, preferences, sessions, library files, `libraryChunks` (vectors), `projectContextRecords`, `contextSelectionManifests` under plain keys, loaded as whole arrays (`src/durable/workspace.ts`). | The most feature-rich object with the most serialisation paths (bootstrap, library, context, future exports). That is a reason **not** to put secrets in it: any new "return the whole record" path would carry them. |
 | R2 | One bucket, `ARTIFACTS`, object keys `workspaces/{scope}/artifacts/{fileId}/{signature}`, JSON bodies with extracted text or image data URLs; no object-level encryption (`workspace.ts`, `wrangler.jsonc`). | R2 holds the *content* that could be sent to a provider. BYOP stores nothing in R2. The bucket is named `lyta-artifacts-preview` in both `bucket_name` and `preview_bucket_name`; whether production really uses a preview bucket is out of scope here but is worth confirming (open question Q10). |
-| Model calls | `runAI`/`runAIStream` in `src/services/ai.ts` call `env.AI.run(model, ...)` from inside the `Conversation` DO (`conversation.ts`), wrapped by `callWithPolicy` (timeout, retry, one fallback). `getModelProfile(mode)` in `src/config/modelProfiles.ts` is a static `Record<ChatMode, ModelProfile>` of Workers AI ids. The file header comment says explicitly that this is "not Cloudflare AI Gateway integration (see #14)". | Today's call site is a *Workers AI binding*, which needs no credential. BYOP is the first thing that needs one. `runAI` is also used for **titles, summaries and follow-ups** (`conversation.ts` ~L389, L427, L454), not only the chat reply — consent has to account for these background calls (section 8). |
+| Model calls | On `main`, `runAI`/`runAIStream` in `src/services/ai.ts` call `env.AI.run(model, ...)` from inside the `Conversation` DO, wrapped by `callWithPolicy`; `getModelProfile(mode)` is a static `Record<ChatMode, ModelProfile>`. PR #32 replaces this with the registry, `ModelProvider` adapters and optional AI Gateway routing (section 4). In both versions the call site is a *Workers AI binding*, which needs no credential, so BYOP is the first feature that needs one. `runAI` is also used for **titles, summaries and follow-ups** (`conversation.ts`; #32 labels them `ai.title`, `ai.summary`, `ai.followups`), not only the chat reply, so consent has to account for these background calls (section 4.6). |
 | Embeddings | `createEmbedding` calls `env.AI.run("@cf/baai/bge-base-en-v1.5", ...)` (`src/services/embeddings.ts`). | Library text is always embedded by Workers AI, regardless of chat provider. This must be disclosed (section 8), and BYOP does not change it: switching embedding model means re-indexing every chunk. |
 | Rate limiting | `RateLimiter` DO, one object per `category:identity`, `enforceLimit` in the router. | Reuse it for key validation, step-up attempts and per-connection caps. |
-| Logging | `logServerError` keeps only an allowlist of metadata keys (`SAFE_METADATA_KEYS`) and truncates values, **but passes `error.message` and `error.cause.message` through** (`getSafeErrorMessage`). `recordOperation` (`src/utils/telemetry.ts`) is content-free. `tests/unit/log-redaction.test.ts` greps `src/` for raw `console.log/error/warn`. | The allowlist protects *metadata*; it does not protect *error text*. An upstream error that echoes a credential (see T-I3) would be logged. The redaction test would not catch it. Both need work (section 10). |
+| Logging | `logServerError` keeps only an allowlist of metadata keys (`SAFE_METADATA_KEYS`) and truncates values, **but passes `error.message` and `error.cause.message` through** (`getSafeErrorMessage`). `recordOperation` (`src/utils/telemetry.ts`) is content-free. `tests/unit/log-redaction.test.ts` greps `src/` for raw `console.log/error/warn`. | The allowlist protects *metadata*; it does not protect *error text*. An upstream error that echoes a credential (see T-I3) would be logged. #32's `ModelError` also keeps the original error as `cause`, and `logServerError` prints `cause.message`. The redaction test would not catch either. Both need work (section 10). |
 | Frontend CSP | `pages/_headers`: `connect-src 'self'`; `script-src 'self' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net`. | `connect-src 'self'` is helpful: the browser cannot talk to a provider directly, so keys *must* go through LYTA, and injected script cannot exfiltrate to arbitrary origins by `fetch`. The two third-party script hosts widen the XSS/supply-chain surface of the one page that will accept a key (T-S3). |
 | Canonical context | `ProjectContextRecord` and `ContextSelectionManifest` (`src/context/projectContext.ts`) contain no model or provider field. | This is why disconnecting a provider cannot damage canonical context: it is provider-independent by construction (criterion 4). Keep it that way. |
 | Roles | There is no admin role or admin API anywhere. | "Administrator-approved" must be defined (section 3, Q2); it cannot mean "a user with an admin flag" because no such flag exists. |
@@ -46,7 +46,7 @@ These are **not** part of BYOP itself but BYOP's security claims depend on them:
 - **P2.** A step-up check: `AuthDirectory` verifies a supplied password against the *session's own user* (new `/verify-password`, rate-limited through `RateLimiter`). Required for connect, rotate and revoke.
 - **P3.** Make `verifyPassword` compare in constant time (cheap hygiene).
 - **P4.** `logServerError` must stop forwarding raw upstream `error.message` for provider errors (section 10).
-- **P5.** #13 and #14 land first, with the adapter split described in section 4.2.
+- **P5.** #13 and #14 land first (PR #32). Section 4.2 lists the registry, provider-id and error-code changes BYOP needs on top of it.
 
 ## 2. Goals and non-goals
 
@@ -65,7 +65,7 @@ These are **not** part of BYOP itself but BYOP's security claims depend on them:
 - N3. No OAuth-delegated provider access in this iteration (few inference providers offer it; revisit later).
 - N4. No team/org key sharing. Today one account is one workspace; a connection belongs to exactly one workspace.
 - N5. No BYOP for guests.
-- N6. No tool/function calling through BYOP providers in the beta (registry capability `tools: false` for these profiles). A third-party model that can trigger actions is a different threat model.
+- N6. No tool/function calling through BYOP providers in the beta. #32's external adapter sends no tool definitions, and BYOP entries must keep it that way: a third-party model that can trigger actions is a different threat model.
 - N7. No claim that LYTA can recall data once sent. A provider's retention is the provider's.
 - N8. Not defending against a compromised Worker deploy or Cloudflare account (section 5.3). We limit blast radius and detect; we do not claim prevention.
 
@@ -75,7 +75,7 @@ These are **not** part of BYOP itself but BYOP's security claims depend on them:
 
 **Phase 1: administrator-approved connections (operator-provisioned).**
 
-- The *operator* (the person who deploys LYTA, today the repository owner) provisions a provider credential as a Worker Secret or AI Gateway stored key and adds a registry entry whose `credentialSource` is `operator-secret`. A workspace is approved by listing its key in `BYOP_APPROVED_WORKSPACES` (a var) — revoked by removing it and deploying, or immediately by `BYOP_ENABLED=false`.
+- The *operator* (the person who deploys LYTA, today the repository owner) provisions the provider credential through the path #32 already documents (`docs/runbooks/provider-change.md`): stored in the gateway as a BYOK key where possible, otherwise the `AI_EXTERNAL_PROVIDER_KEY` Worker secret. A registry entry with `credentialSource: "operator"` that is **workspace-scoped** (section 4.2) makes the model selectable only for workspaces in `BYOP_APPROVED_WORKSPACES`. Without that scoping, #32's own enablement steps would route every workspace's content to the provider. Revoked by removing the id and deploying, or immediately by `BYOP_ENABLED=false`.
 - The workspace owner still goes through provider/profile selection and the consent gate; they never type a key.
 - What this phase proves: registry overlay, gateway routing with attribution, consent enforcement, egress ledger, failure surfacing, revocation. What it deliberately does *not* exercise: browser entry and the vault's encryption. That is why it is the safer first step: no new secret ever crosses the browser boundary.
 - Honest naming: this is "admin-brokered", not "bring your own". The user's own key can enter only by being handed to the operator out of band; I recommend not doing that for anyone but the operator themself.
@@ -90,6 +90,28 @@ These are **not** part of BYOP itself but BYOP's security claims depend on them:
 
 ## 4. Architecture and how it plugs into #13 and #14
 
+This section is written against PR #32 (`claude/model-registry-ai-gateway-f8cfe8`, "model-platform"), which implements #13 and #14 and was open and unmerged when this was revised. File and symbol names below are the ones in that PR. If #32 changes before it merges, this section is the part to re-check. Section 1 still describes `main`.
+
+### 4.1 What #32 provides
+
+| Piece | Where | What BYOP relies on |
+| --- | --- | --- |
+| Registry | `src/ai/registry.ts`: `MODEL_REGISTRY`, `PRODUCT_PROFILES`, `resolveProfile()`, `validateRegistry()` | Every model LYTA may call is an entry with capabilities, limits, `privacyClass`, `availability`, `cost`, and an `evaluation` result. Profiles (`instant`, `deep-review`, `visual-review`, plus internal `creative` and `embedding`) list `candidates` in fallback order and the `allowedPrivacyClasses` they accept. |
+| The gate | `isSelectable()` in `registry.ts` | An entry is selectable only if `availability === "enabled"`, it has an `evaluation`, its privacy class is in the profile's `allowedPrivacyClasses`, and, for `provider: "gateway-external"`, `externalProvidersEnabled` is true. `externalProvidersEnabled` is `AI_EXTERNAL_PROVIDERS === "enabled"` **and** a gateway is configured (`createModelRouting` in `src/ai/providers/index.ts`). The only external entry (`gateway-external/openai-gpt-4o-mini`) ships `disabled` with `evaluation: null`. |
+| Provider interface | `src/ai/provider.ts`: `ModelProvider { chat, stream, structured, embed }`; adapters in `src/ai/providers/` (`workersAi.ts`, `gatewayExternal.ts`) | Product code never calls a binding or SDK directly; `src/services/ai.ts` (`runAI`, `runAIStreamWithMetadata`, `runStructured`) plans a call (`planCall`), then calls `routing.provider(entry.provider)`. `stream` always yields Workers-AI-style SSE whatever the provider's wire format. |
+| Gateway | `src/ai/gateway.ts`: `readGatewayConfig`, `buildGatewayOptions`, `withModelGateway`, `workspaceTag` | Per-call gateway options are `collectLog: false`, `skipCache: true`, `requestTimeoutMs`, `retries.maxAttempts: 1`, and four metadata entries (`profile`, `route`, `workspace` = `workspaceTag()`, `attempt`). The gateway allows five, so one slot is free. `AI_GATEWAY_REQUIRED="true"` makes a missing gateway fail closed. |
+| External adapter | `gatewayExternal.ts`: `createGatewayExternalProvider(binding, gateway, providerKey?)` | Calls `binding.gateway(id).run({provider, endpoint: "chat/completions", headers, query}, {gateway})`. The key, if any, is passed as the third constructor argument and sent as `Authorization: Bearer`. On a non-2xx response only the status is kept; the body is dropped. It sends no tool definitions. It has only been run against a mocked gateway. |
+| Errors | `src/ai/types.ts`: `ModelError`, `normalizeModelError`; `describeModelFailure()` in `services/ai.ts` | One code set (`timeout`, `cancelled`, `rate_limited`, `billing_limit`, `unavailable`, `invalid_output`, `not_configured`, `no_compatible_model`, `upstream`) and a transparent `degraded` object in chat responses. `STOP_RETRYING` = `cancelled`, `billing_limit`, `not_configured`. |
+| Telemetry | `recordOperation()` in `src/utils/telemetry.ts` | Now carries `profile`, `provider`, `workspace` (tag), `viaGateway`, `errorCode`, `estimatedCostUsd`. |
+| UI metadata | `src/ai/catalog.ts` `describeProfiles()`, served at `GET /models/profiles` **before** `resolvePrincipal`; `ModelCallMetadata` attached to chat responses | Profile label and `dataHandling` text first, raw model identity second. |
+| Config names | `AI_GATEWAY_ID`, `AI_GATEWAY_REQUIRED`, `AI_EXTERNAL_PROVIDERS` (vars); `AI_EXTERNAL_PROVIDER_KEY` (Worker secret) | BYOP uses none of these as its own switches. See 4.5. |
+
+Two properties of #32 matter more than the rest. First, **registry entries are global**: adding `external-processor` to a profile's `allowedPrivacyClasses` and enabling an external entry routes *every* workspace's content to that provider with the operator's key. That is the right shape for an operator-chosen model and the wrong shape for "this one workspace's own key". Second, **`createModelRouting` caches one adapter per `ProviderId` and builds the external one with `env.AI_EXTERNAL_PROVIDER_KEY`**, so a BYOP route that reused provider id `gateway-external` could silently be served with the operator's key.
+
+### 4.2 BYOP is a new path *through* that gate, not around it
+
+BYOP adds a credential source and a per-workspace selection rule. It does not add a second calling convention, a second error vocabulary, or a second place where gateway options are built.
+
 ```mermaid
 flowchart LR
     subgraph Browser
@@ -101,49 +123,72 @@ flowchart LR
     subgraph DOs["Durable Objects"]
         A[AuthDirectory<br/>sessions, step-up]
         W[Workspace<br/>canonical context, library]
-        C[Conversation<br/>history, streaming]
+        C[Conversation<br/>runAI, planCall, callWithPolicy]
         V[ProviderVault<br/>NEW: ciphertext, consent, ledger]
     end
-    GW[AI Gateway<br/>authenticated, logging off]
+    GW[AI Gateway<br/>binding.gateway.run<br/>collectLog false, skipCache true]
     P[Provider API]
-    WAI[Workers AI<br/>default and embeddings]
+    WAI[Workers AI<br/>default profiles and embeddings]
 
     UI -->|HTTPS, cookie| R
     R --> A
     R --> W
-    R -->|connect, revoke, status| V
-    R --> C
-    C -->|neutral request, no credential| V
-    V -->|decrypt in memory, attach auth| GW
+    R -->|connect, revoke, status, routes| V
+    R -->|chat, plus workspace routes| C
+    C -->|"workspace-vault adapter: credential-free request"| V
+    V -->|"gatewayExternal adapter + decrypted key, in memory only"| GW
     GW --> P
     C -->|default profiles| WAI
 ```
 
-The vault is addressed only by `idFromName("vault:" + principal.workspaceKey)`, where the key is derived by the router from the authenticated principal. Nothing in a request body can select a different vault.
+What is added, all inside `src/ai/` except the vault and router routes:
 
-### 4.1 What is new
+1. **A new `ProviderId`, `"workspace-vault"`.** `createModelRouting().provider("workspace-vault")` returns a small adapter (`src/ai/providers/workspaceVault.ts`) that implements `ModelProvider` by sending the call to the workspace's vault. It never receives a key and never falls back to `createGatewayExternalProvider(…, env.AI_EXTERNAL_PROVIDER_KEY)`. Having a distinct id is what closes the cache-and-wrong-key hazard from 4.1.
+2. **A `credentialSource` field on registry entries**: `"platform"` (Workers AI, today's three entries), `"operator"` (the `AI_EXTERNAL_PROVIDER_KEY` / gateway-BYOK path in #32), `"workspace-vault"` (BYOP). BYOP entries are ordinary registry entries (`id: "workspace-vault/openai-gpt-4o-mini"`, `privacyClass: "external-processor"`) and must carry an `evaluation` like any other. **A user brings a key, not a model**: an unevaluated model cannot be reached by pasting a key. `validateRegistry()` gains rules: a `workspace-vault` entry must be `external-processor`, must use the `workspace-vault` provider, and must not appear in any profile's global `candidates`.
+3. **A workspace-aware selection step in `resolveProfile()`**, via a new option `workspaceRoutes: Array<{ entryId, connectionId }>` (and a profile flag `allowWorkspaceRoutes`, true for `instant`, `deep-review`, `visual-review`). Entries that are workspace-scoped (every `workspace-vault` entry, and any `operator` entry flagged `scope: "workspace"` for Phase 1) are selectable only if the workspace has an *active, consented* route to that exact entry. The global candidate list and `isSelectable()` are unchanged, so nothing about BYOP can change what other workspaces get.
+4. **The same capability and context filters apply.** A BYOP entry must satisfy `requiredCapabilities` and `minContextTokens` exactly like a Workers AI one, so an image request never reaches a text-only BYOP model.
+5. **BYOP gating conditions are conjunctive and extend the existing ones.** A call may leave via BYOP only if all hold: `BYOP_ENABLED`, the existing `externalProvidersEnabled` (so `AI_EXTERNAL_PROVIDERS` remains the master switch for *any* third-party traffic, and a gateway is configured), the registry entry is `enabled` with an evaluation and a matching privacy class on the profile's BYOP allowance, the workspace has an active route, and the vault confirms consent and caps at egress. The vault re-checks all of these itself; the router's route list is a hint, not authority.
+6. **Four new error codes** in `ModelErrorCode`: `credential_rejected` (provider 401/403), `consent_required`, `cap_reached`, `connection_unavailable` (revoked or kill-switched). #32's `normalizeModelError` has no auth code today: 401/403 fall into `upstream`, which is retryable. All four join `STOP_RETRYING` and `FAILURE_MESSAGES`, so they surface through the existing `describeModelFailure()` / `degraded` path.
+7. **A metadata override.** `planCall().metadata()` returns the *profile's* static `dataHandling` string (currently "…Your text and files stay on Cloudflare…"). For a BYOP-served call that sentence is false. The response metadata must instead carry the destination disclosure for that connection (provider, "leaves Cloudflare", consent version). This is a correctness requirement, not polish, and has a test (12.2).
 
-| Item | Detail |
-| --- | --- |
-| `ProviderVault` DO (`src/durable/providerVault.ts`) | New SQLite-backed class, new migration tag (next free tag at implementation time; `v5` today, but #13/#14 may also add one — coordinate). |
-| Secrets / vars | `BYOP_KEK_V1` (Worker Secret, base64 of 32 random bytes), `BYOP_KEK_CURRENT` (var, `"1"`), `AI_GATEWAY_TOKEN` (Worker Secret, from #14), `BYOP_ENABLED` (var, default `"false"`), `BYOP_APPROVED_WORKSPACES` / `BYOP_BETA_USERS` (vars). None appear in `wrangler.jsonc` as values; only names/vars. |
-| Router routes | `GET /byop/connections`, `POST /byop/connections` (create), `POST /byop/connections/:id/consent`, `POST /byop/connections/:id/rotate`, `POST /byop/connections/:id/revoke`, `DELETE /byop/connections/:id`. All require an account principal, a same-origin `Origin`, and step-up for the mutating ones. |
-| Registry additions (#13) | `credentialSource: "platform" \| "operator-secret" \| "workspace-vault"`; `privacyClass` value for customer-keyed external providers; `byop: { allowed, phase }` per provider. |
+### 4.3 Request path (names as in #32)
 
-### 4.2 Assumptions about #13 and #14 (to be reconciled when they land)
+1. Router resolves the principal. For an account principal with `BYOP_ENABLED`, it asks the vault for the workspace's routes (non-secret: `[{ entryId, connectionId, profileIds }]` for connections that are `active` with current consent) and forwards `workspaceRoutes` to `Conversation` in the existing body, next to `userId: principal.workspaceKey`. (The router sets `userId` after spreading the client payload, so the payload cannot override it.) Doing this in the router rather than inside `Conversation` keeps an extra DO hop off the model-call path and keeps vault addressing in the code that holds the principal.
+2. `Conversation` calls `runAI` / `runAIStreamWithMetadata` with the existing options plus `workspaceRoutes`. `planCall` passes them to `resolveProfile`. Only **eligible routes** use them: `ai.chat`, `ai.chat.stream`, `ai.structured`. The background routes `ai.summary`, `ai.title`, `ai.followups` (which #32 labels explicitly) ignore `workspaceRoutes`, so they stay on Workers AI (4.6).
+3. If resolution picks a `workspace-vault` entry, `routing.provider("workspace-vault")` is used. Its `stream()` / `chat()` / `structured()` send `{ entryId, connectionId, messages, params, attribution, attempt, manifest }` to the vault. The adapter sends the entry **id**; the vault looks the entry up in its own copy of the registry (`findRegistryEntry`) rather than trusting a caller-supplied entry object.
+4. The vault checks status, kill switches, `externalProvidersEnabled`, consent coverage of the manifest, and caps, then decrypts the key and calls **`createGatewayExternalProvider(env.AI, gateway, decryptedKey)` for this request only**, discarding the instance afterwards (the cached instance in `createModelRouting` is never used for BYOP). That reuses #32's wire format, SSE rewriting, gateway options, status-only error handling and `workspaceTag` attribution unchanged; the existing `providerKey` constructor argument is the seam.
+5. The vault returns either the SSE byte stream (already in LYTA's `{"response": …}` format) or `{ error: code }`. The workspace-vault adapter turns the error into a `ModelError(code)` with **no `cause`**. (#32's adapters keep `cause: error`, and `logServerError` prints `cause.message`; the vault boundary is where that chain is cut for BYOP.)
+6. `callWithPolicy` continues to own timeout, retry, fallback and telemetry. Each attempt is a separate vault call, so caps count attempts, not user messages.
 
-I could not read the registry/gateway implementation (it is in a sibling branch that had no diff against `main` when this was written), so these are requirements BYOP places on it, taken from the issue text of #13 and #14:
+Gateway options for these calls are exactly those from `buildGatewayOptions`; BYOP adds one metadata entry in the free fifth slot (`credential: "workspace"`) so gateway analytics can separate BYOP from operator-keyed traffic without any workspace identity beyond the existing hashed tag.
 
-1. **Adapters are split into a pure half and a credentialed half.** The pure half (`buildRequest(neutralRequest) → {path, body, nonAuthHeaders}`, `parseStream(bytes)`, `classifyError(status, headers) → ErrorCode`) never sees a credential and is unit-testable without secrets. Only the vault attaches the auth header and performs the `fetch`. `classifyError` maps to a fixed enum and **never returns the upstream body**.
-2. **Route resolution is workspace-aware.** `resolveRoute(profileId, workspaceKey)` intersects the static registry's compatible models for the profile with that workspace's *active, consented* connections. The static registry is never mutated per workspace; the overlay is read from the vault.
-3. **#14's "all production calls use the gateway" applies to BYOP.** The vault's `fetch` target is the gateway URL for the provider, authenticated with `AI_GATEWAY_TOKEN` (`cf-aig-authorization`), so the gateway can't be used by anyone else. The only direct-provider path allowed is a local-development stub that does not exist in production builds.
-4. **Gateway settings for BYOP requests**: request/prompt logging **off** (per-request `cf-aig-collect-log: false` plus the gateway-level setting), caching **off** (`cf-aig-skip-cache`), and `cf-aig-metadata` carrying only `{profile, connection: <opaque id>, ws: HMAC(workspaceKey)}` for cost attribution — never the raw workspace key or email. (Header names are from Cloudflare's current gateway docs as I know them; verify at implementation — Q4.)
-5. **Fallback never changes data destination silently.** A BYOP profile may fall back to another model *of the same provider connection* (same consent covers it). It must **not** fall back to Workers AI or another provider: that changes where the content goes and, per #14, "never silently changes review semantics". Instead the response is a transparent degraded result: "Your provider failed (`quota_exhausted`). Retry once on Workers AI?" — a user action that is itself a new consent decision for the destination.
-6. **Timeouts, retries and cancellation come from the profile via #14's policy**, with one BYOP-specific rule: `auth_failed` is never retried (retrying a 401/403 can trip provider lockouts and bans).
+### 4.4 Fallback semantics
 
-### 4.3 What stays on Workers AI regardless
+`resolveProfile` returns at most one fallback. For BYOP the fallback is drawn only from the same connection's entries. A BYOP primary **never** falls back to a `cloudflare-hosted` entry or to another connection: that would send the same content to a different destination without a new consent, and #14 already requires that fallback "never silently changes review semantics". When the BYOP route fails, the caller gets the normal transparent `degraded` response, and the UI offers "Retry on `<profile>` with Workers AI?", which is an explicit user action and, because the destination changes, a fresh disclosure.
 
-Embeddings for library chunks and (by default) conversation **titles, summaries and follow-up suggestions**. Routing these to the BYOP provider would send *more* of the conversation to a third party than the user's one visible action (sending a message) implies, and summaries are derived from older history. Default: they stay on Workers AI and the consent screen says so. Whether a "provider only" strict mode should exist is Q5.
+### 4.5 New configuration, and names deliberately not reused
+
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `BYOP_ENABLED` | var, default `"false"` | Global kill switch / feature gate. |
+| `BYOP_KEK_V1`, `BYOP_KEK_V2`… | Worker Secrets | Key-encryption keys (base64, 32 bytes). |
+| `BYOP_KEK_CURRENT` | var | Which KEK version wraps new DEKs. |
+| `BYOP_APPROVED_WORKSPACES` | var | Phase 1 allowlist (workspace keys). |
+| `BYOP_BETA_USERS` | var | Phase 2 allowlist (user ids). |
+| `PROVIDER_VAULT` | DO binding | `ProviderVault`, new migration tag (see Q13). |
+
+Names owned by #32 and **not** reused or repurposed: `AI_GATEWAY_ID`, `AI_GATEWAY_REQUIRED`, `AI_EXTERNAL_PROVIDERS`, `AI_EXTERNAL_PROVIDER_KEY`. In particular `AI_EXTERNAL_PROVIDER_KEY` is the *operator's* key; BYOP code must never read it, and a workspace with no working key of its own must fail rather than quietly use it (it would bill and route as the operator). No separate gateway token is needed: calls go through the `AI` binding's `gateway()` method, which #32 already uses, so the earlier idea of an `AI_GATEWAY_TOKEN` is dropped. `BYOP_*` values never appear in `wrangler.jsonc` except non-secret vars, matching the comment #32 added there.
+
+### 4.6 What stays on Workers AI regardless
+
+- **Embeddings.** The `embedding` profile has `allowFallback: false`, only `cloudflare-hosted` candidates, and the external adapter's `embed()` throws "No external embedding model is approved". Library text is embedded by Workers AI whatever chat provider is connected; changing that means re-indexing every stored vector (`docs/runbooks/provider-change.md` already says so).
+- **Titles, summaries and follow-up suggestions** (`ai.title`, `ai.summary`, `ai.followups`) by default. Sending them to the BYOP provider would transmit more of the conversation than the user's one visible action implies, and a summary is derived from older history. Default: they stay on Workers AI and the consent screen says so. Whether a "provider only" strict mode should exist is Q5.
+
+### 4.7 Other things this design asks of #32 (small, all in `src/ai/` or the registry)
+
+- `GET /models/profiles` is unauthenticated and workspace-agnostic. It must stay that way (no connection data). Workspace-specific profile state belongs on an authenticated `GET /byop/connections`.
+- `callWithPolicy` takes `profile.fallbackModel` from the resolution; BYOP needs the "same connection only" rule from 4.4 expressed in `resolveProfile`, not in the caller.
+- Tests in `tests/unit/model-registry.test.ts` and `model-provider-contract.test.ts` should run the workspace-vault adapter against the same contract using an in-memory fake vault.
 
 ## 5. Threat model
 
@@ -226,14 +271,14 @@ An external KMS (cloud KMS or Vault) would add a second authority but needs its 
 | T-R1 | Repudiation | Owner disputes "I never connected/consented/sent that". | Append-only audit events in the vault (connect, consent, rotate, revoke, admin approval, step-up failures) with timestamps and request ids; per-request ledger of *what classes* went where. | Owner-initiated deletion removes the in-vault trail by design (criterion 4). Evidence then survives only as metadata-only operational log lines. Accepted trade-off. |
 | T-I1 | Info disclosure | Credential in logs, via error text. | Adapters throw typed errors with fixed messages; vault never forwards upstream bodies; `logServerError` extended with a credential-pattern scrubber as *defence in depth* (not the control); canary test across every route (section 12). | Regex scrubbing is best-effort; the primary control is "no code path ever holds the secret except the vault". |
 | T-I2 | Info disclosure | Credential in any response to the browser, exports, or prompts. | The vault has no "get plaintext" operation. API returns `{id, provider, label, last4, status, timestamps}` only. Exports/bootstrap never touch the vault. Prompts are built in `Conversation`, which never receives the key. | None known. |
-| T-I3 | Info disclosure | Provider error body echoes (part of) the key, e.g. an "incorrect API key" message. | `classifyError` maps status/headers to a fixed enum and drops the body; `ProviderError.message` is a constant per code. | A provider putting key material in a *header* we log: we never log upstream headers. |
+| T-I3 | Info disclosure | Provider error body echoes (part of) the key, e.g. an "incorrect API key" message. | `gatewayExternal.ts` already keeps only the HTTP status and `normalizeModelError` emits a constant message per code; the vault additionally returns only `{ error: code }` across the DO boundary, so the `cause` chain #32 keeps never leaves it. | A provider putting key material in a *header* we log: we never log upstream headers. |
 | T-I4 | Info disclosure | Key in URL (some providers accept `?key=`), then in gateway/Workers logs. | Adapters must send the credential in a header only; a static test forbids building a URL with credential material; no adapter that can only authenticate via query string is registrable. | A provider that supports only query-string auth is simply not approved. |
-| T-I5 | Info disclosure | Workspace content sent to a provider the user didn't pick, or more content than they agreed to. | Server-side consent gate; destination fixed by registry; per-request manifest compared with consented content classes; no silent fallback to another destination (section 4.2 item 5). | Anything inside a consented class can be sent. |
-| T-I6 | Info disclosure | Gateway retains prompts/responses. | Gateway logging and caching off for BYOP requests; verified by a deployment check (section 12.4). | Depends on correct gateway config; a runbook check. |
+| T-I5 | Info disclosure | Workspace content sent to a provider the user didn't pick, or more content than they agreed to. | Server-side consent gate; destination fixed by registry; per-request manifest compared with consented content classes; no silent fallback to another destination (section 4.4). | Anything inside a consented class can be sent. |
+| T-I6 | Info disclosure | Gateway retains prompts/responses. | `buildGatewayOptions` already sends `collectLog: false` and `skipCache: true` on every call; the vault uses it unchanged and a test asserts those options on every BYOP call. The gateway-level setting is checked in the pre-enable deployment checklist (section 12.4). | Depends on gateway configuration. #32 notes no real gateway exists yet, so none of this has been exercised end to end. |
 | T-I7 | Info disclosure | KEK compromise plus ciphertext exposure. | KEK only as a Worker Secret; versioned; rotation procedure; DEK per workspace limits cryptanalytic exposure per key but not this scenario. Scenario C in the runbook: assume plaintext exposure, notify users to rotate at the provider. | Real; see 5.3. |
 | T-I8 | Info disclosure | Plaintext lingers in isolate memory/heap dumps. | Decrypt per request, never cache plaintext across requests, no logging of the object holding it; JS can't zero strings, so lifetime is minimised, not eliminated. | Accepted. |
 | T-D1 | DoS / cost | Runaway usage (injection loop, stolen session) burns the user's provider spend. | Per-connection daily request and token caps enforced in the vault before egress; `RateLimiter` per workspace; cap breach disables the connection to `needs_attention`. | A user can set caps higher than their budget; we default conservatively. |
-| T-D2 | DoS | Attacker triggers repeated auth failures to get the user's key banned by the provider. | `auth_failed` is never retried, and moves the connection to `needs_attention` (no further sends until the owner acts). | One failure can still occur. |
+| T-D2 | DoS | Attacker triggers repeated auth failures to get the user's key banned by the provider. | `credential_rejected` is never retried, and moves the connection to `needs_attention` (no further sends until the owner acts). | One failure can still occur. |
 | T-D3 | DoS | Vault hot-spot: one DO per workspace is single-threaded. | Vault does I/O-bound proxying only; no heavy compute (decrypt is microseconds). Concurrency per workspace is naturally low. | Latency from the extra DO hop (a few ms). |
 | T-E1 | Elevation | A bug lets a guest or another user reach vault routes. | Routes require an account principal; vault address derived server-side; tests for cross-workspace and guest access (section 12). | Router regression: covered by tests. |
 | T-E2 | Elevation | Operator-approval path abused to approve oneself. | Phase 1 approvals are in deploy-time config, not an API; Phase 2 allowlist likewise. No admin HTTP endpoint is introduced (see Q2). | Anyone who can deploy can approve (TB4). |
@@ -252,7 +297,7 @@ Phase 2:
 1. Owner opens "Connect a provider", picks a provider from the registry's approved list (only those with `byop.allowed`), and a profile (`Instant` / `Deep Review` / `Visual Review`).
 2. Owner re-enters their LYTA password (step-up, P2) and pastes the key into a `type=password` field.
 3. The browser sends one `POST /byop/connections` with `{providerId, profileIds, label, apiKey, currentPassword}`. The router checks account principal, `Origin`, allowlist, rate limit, then forwards to the vault. The router does not log the body, and the `requestMetadata`-style objects never include it.
-4. The vault validates the key with a minimal authenticated call to the provider **through the gateway** that sends no workspace content (e.g. a model-list or equivalent token-count call; per provider in the registry). Failure returns a generic `credential_rejected`.
+4. The vault validates the key with a minimal authenticated call to the provider **through the same adapter and gateway options** that carries no workspace content: a fixed one-token `chat` call (`max_tokens: 1`) is all #32's adapter can express today, and it costs the user a token or so. Failure returns a generic `credential_rejected`.
 5. The vault encrypts and stores the key (6.2), returns `{id, status: "pending", last4}`. The browser clears the field immediately and never receives the key again.
 
 The honest statement for criterion 2: a user-typed key is necessarily present in the page's DOM and JS heap until submitted, and in transit over TLS to the Worker. "Never sent to or stored in the browser" is satisfied in the sense that matters — it is never *returned* to the browser, never persisted in `localStorage`/`sessionStorage`/IndexedDB/cookies/URL, and the entry form is not reachable by third-party scripts. Phase 1 removes even that exposure.
@@ -278,7 +323,7 @@ Exactly what lives where:
 | `ProviderVault` DO storage, key `meta` | `{schema, workspaceKeyHash, dek: {dekId, kekVersion, iv, ct, createdAt}}` | plaintext DEK |
 | `ProviderVault`, key `conn:{id}` | `{id, providerId, profileIds[], label, status, createdAt, activatedAt, approval: {mode, approvedAt}, credential: {version, last4, iv, ct, dekId, createdAt, lastValidatedAt}, limits: {dailyRequests, dailyInputTokens}, activeConsentId}` | plaintext key, full key, key hash |
 | `ProviderVault`, key `consent:{connectionId}:{n}` | `{policyVersion (hash of shown text), providerId, contentClasses[], confirmedAt, requestId}` (append-only) | any content |
-| `ProviderVault`, key `ledger:{yyyymmdd}:{seq}` | `{ts, requestId, connectionId, profileId, providerId, contentClassCounts, bytesOut, tokensIn?, tokensOut?, status: "ok"\|ErrorCode, durationMs, estCostUsd}`; trimmed after 90 days by alarm | prompt text, response text, file names, document ids |
+| `ProviderVault`, key `ledger:{yyyymmdd}:{seq}` | `{ts, requestId, connectionId, profileId, providerId, contentClassCounts, bytesOut, tokensIn?, tokensOut?, status: "ok"\|ModelErrorCode, durationMs, estCostUsd}`; trimmed after 90 days by alarm | prompt text, response text, file names, document ids |
 | `ProviderVault`, key `audit:{ts}:{seq}` | security events (see T-R1), no secrets | |
 | `Workspace` DO | **nothing** about connections | |
 | `Conversation` DO | nothing about credentials or connections | |
@@ -293,11 +338,11 @@ Exactly what lives where:
 
 ### 6.3 Use
 
-1. Router resolves the principal, loads the workspace's route for the profile via the registry overlay (`resolveRoute`), and — as today — forwards the chat request to `Conversation` with `userId: principal.workspaceKey` (derived server-side; the existing `payload` spread cannot override it because the router sets it after).
-2. `Conversation` builds messages as today (including the untrusted-sources boundary), computes a **disclosure manifest** (classes and counts of what's included; see 8.3), and calls `vault.fetch("/egress", {requestId, connectionId, profileId, manifest, request})` where `request` is the *neutral, credential-free* output of the adapter's `buildRequest`.
-3. The vault, inside one serialised step, checks: connection exists and is `active`; `BYOP_ENABLED`; provider `availability` in registry; consent exists for the current `policyVersion` and covers every class in the manifest; daily caps not exceeded; `RateLimiter`-style burst check. Any failure returns a typed error without contacting the provider and writes a ledger row (`egress_blocked`).
-4. The vault decrypts the DEK, then the credential, builds the gateway request (credential in the provider's auth header, `cf-aig-*` headers per 4.2), and `fetch`es with an `AbortController` it retains in a per-isolate map keyed by connection.
-5. Success: it returns the response body as a stream. Failure: it returns `{error: ErrorCode}` only (never an upstream body) and updates connection status per the error (`auth_failed` → `needs_attention`).
+1. Router resolves the principal, obtains the workspace's non-secret routes from the vault, and forwards them to `Conversation` with `userId: principal.workspaceKey` (section 4.3).
+2. `Conversation` builds messages as today (including the untrusted-sources boundary). `planCall`/`resolveProfile` select a `workspace-vault` entry; the workspace-vault adapter computes a **disclosure manifest** (classes and counts of what's included; see 8.3) and calls `vault.fetch("/egress", {entryId, connectionId, messages, params, attribution, attempt, manifest})`. The request is credential-free by construction.
+3. The vault, inside one serialised step, checks: connection exists and is `active`; `BYOP_ENABLED`; `externalProvidersEnabled`; the entry exists in the registry, is `enabled`, has an evaluation and `credentialSource: "workspace-vault"`; consent exists for the current `policyVersion` and covers every class in the manifest; daily caps are not exceeded. Any failure returns a typed error without contacting the provider and writes a ledger row.
+4. The vault decrypts the DEK, then the credential, and runs `createGatewayExternalProvider(env.AI, gateway, key)` for this request only (section 4.3), keeping an `AbortController` per in-flight call in a per-isolate map keyed by connection.
+5. Success: it returns the SSE stream. Failure: it returns `{error: code}` only (never an upstream body or `cause`) and updates connection status per the code (`credential_rejected` → `needs_attention`).
 6. On stream end the vault writes the ledger row (bytes, provider-reported usage if present, duration, cost estimate).
 
 Why the vault does the `fetch` instead of returning the key (or a short-lived derived credential) to `Conversation`:
@@ -312,7 +357,7 @@ B also makes revocation linearisable: a Durable Object processes events for one 
 
 ### 6.4 Rotation
 
-**Credential rotation** (owner-initiated, or forced after `auth_failed`): `POST /byop/connections/:id/rotate` with new key + step-up. The vault validates the new key first, then in one storage transaction writes `credential.version + 1` (fresh IV, fresh DEK if the old DEK is over 180 days old), deletes the old ciphertext, and keeps consent as-is (consent is about provider and content classes, not the key). The UI says: "The old key still works at the provider until you revoke it there." No grace window: old ciphertext is destroyed immediately.
+**Credential rotation** (owner-initiated, or forced after `credential_rejected`): `POST /byop/connections/:id/rotate` with new key + step-up. The vault validates the new key first, then in one storage transaction writes `credential.version + 1` (fresh IV, fresh DEK if the old DEK is over 180 days old), deletes the old ciphertext, and keeps consent as-is (consent is about provider and content classes, not the key). The UI says: "The old key still works at the provider until you revoke it there." No grace window: old ciphertext is destroyed immediately.
 
 **DEK rotation**: re-encrypt every connection of that workspace under a new DEK in one transaction (a handful of records), then replace `meta.dek`. Triggered on credential rotation when stale, on suspicion, or by KEK rollover.
 
@@ -363,7 +408,7 @@ sequenceDiagram
     A-->>R: ok
     R->>R: workspaceKey from principal, check allowlist and rate limit
     R->>V: create(providerId, profileIds, apiKey)
-    V->>G: validation call (key only, no workspace content)
+    V->>G: validation call (one-token chat, no workspace content)
     G->>P: authenticated request
     P-->>G: accepted
     G-->>V: ok
@@ -380,12 +425,13 @@ sequenceDiagram
     Note over Owner,P: Use (every request)
     Owner->>B: Send message with Deep Review
     B->>R: POST /chat/stream
-    R->>C: forward, userId from principal, route from registry overlay
-    C->>C: build messages and disclosure manifest
-    C->>V: egress(neutral request, manifest)
+    R->>V: routes (active and consented, no secrets)
+    R->>C: forward with userId and workspace routes
+    C->>C: planCall picks the workspace-vault entry, build manifest
+    C->>V: egress(entry id, messages, manifest)
     V->>V: check active, consent covers manifest, caps
     V->>V: decrypt DEK then key, in memory only
-    V->>G: request with auth header, logging and cache off
+    V->>G: gatewayExternal adapter, key in Authorization, collectLog false, skipCache true
     G->>P: forward
     P-->>G: stream
     G-->>V: stream
@@ -430,7 +476,7 @@ The "Connect" flow ends on a screen that names:
 
 - **Destination**: provider display name, the legal entity, the gateway in between (Cloudflare AI Gateway, logging off), the region if known.
 - **Table of classes** above, with per-class toggles that default as shown.
-- **What stays elsewhere**: "Library text is still embedded by Cloudflare Workers AI. Chat titles, summaries and suggested follow-ups are still generated by Workers AI" (per 4.3).
+- **What stays elsewhere**: "Library text is still embedded by Cloudflare Workers AI. Chat titles, summaries and suggested follow-ups are still generated by Workers AI" (per 4.6).
 - **Provider-side facts LYTA can't control**: the provider's retention and training policy, linked, with the version/date LYTA reviewed.
 - **Cost**: charged to your provider account, with the cap you are setting.
 - An explicit, unticked checkbox: "I understand `<classes>` from this workspace will be sent to `<provider>`", and a button that records consent. No pre-ticked state, no "remember for all providers".
@@ -441,7 +487,7 @@ The button posts `{connectionId, policyVersion, classes[]}`; `policyVersion` is 
 
 - **Server-side gate**: the vault will not make the first (or any) content-carrying request without a matching consent. UI-only enforcement would not satisfy criterion 3.
 - **First-send preview**: before the first message to a newly connected provider, the UI shows "This message plus N library excerpts (from M files) and your last K turns will go to `<provider>`" using the disclosure manifest, and requires one more click. After that, the per-request manifest is not re-prompted unless a class not yet consented to would be included (e.g. an image), in which case the request is blocked with `consent_required` and the UI asks.
-- **Per-response badge**: every BYOP answer is labelled with the provider and profile, and the existing citations stay. Raw model identity appears only as transparent metadata (#13).
+- **Per-response badge**: every BYOP answer is labelled with the provider and profile, and the existing citations stay. The label comes from `ModelCallMetadata`, whose `dataHandling` text must be the BYOP destination disclosure and not the profile's static "stays on Cloudflare" sentence (section 4.2 item 7). Raw model identity stays secondary metadata, as #13 requires.
 - **"What was sent" view**: the ledger rows render as "12 Mar 14:02 · Deep Review · message + 3 excerpts + 6 turns · 18 KB out · ok". No text.
 - The manifest should extend `ContextSelectionManifest` (#12) with a `destination` field rather than introduce a parallel audit structure.
 
@@ -449,46 +495,51 @@ The button posts `{connectionId, policyVersion, classes[]}`; `policyVersion` is 
 
 - The vault address is `idFromName("vault:" + principal.workspaceKey)`. `workspaceKey` comes from `resolvePrincipal` (account id from a validated session). No handler reads a workspace or user id from the request body or query for `/byop/*`.
 - Connection ids are random (`createId("conn")`) and resolved only inside the owning vault. A foreign or unknown id returns an identical `404`; there is no "exists but not yours" signal.
-- Routing configuration (profile → connection) is stored in the vault and read by `resolveRoute` using the same derived address. The `Conversation` DO takes `userId` from the router's trusted field; its own stub name already contains `workspaceKey:sessionId`.
-- Guests: `principal.user.isGuest` ⇒ `/byop/*` returns `403` and `resolveRoute` ignores overlays. The guest cookie is a bearer secret with no recovery path; it should not guard a billing credential.
-- The registry (#13) stays global and immutable at runtime; a workspace cannot add providers, models or endpoints, only choose among approved ones. Phase 1 approvals and Phase 2 allowlists are deploy-time config.
+- Routing configuration (profile → connection) is stored in the vault and read through the same derived address (the router passes `workspaceRoutes` into `resolveProfile`, section 4.3). The `Conversation` DO takes `userId` from the router's trusted field; its own stub name already contains `workspaceKey:sessionId`.
+- Guests: `principal.user.isGuest` ⇒ `/byop/*` returns `403` and no `workspaceRoutes` are passed. The guest cookie is a bearer secret with no recovery path; it should not guard a billing credential.
+- The registry stays global and immutable at runtime; a workspace cannot add providers, models or endpoints, only select among registry entries that are marked workspace-scoped and already evaluated. `gatewayExternal.ts` builds the provider endpoint from the registry model id, so there is no user-supplied URL. Phase 1 approvals and Phase 2 allowlists are deploy-time config.
 
 ### How #14 fits
 
-- #14 owns the gateway: provider routes, timeouts/retries/fallback per profile, rate limits, metrics, and the "logging off by default" posture. The vault is its credentialed *client* for BYOP traffic and must use the same gateway URL, token and per-profile policy rather than carry its own.
-- #14's per-workspace cost attribution uses `cf-aig-metadata` with an HMAC pseudonym of the workspace; the vault's ledger is the owner-facing record, and it is the source for the cost view (gateway analytics are operator-facing and can lag).
-- #14's "provider outage triggers the documented fallback or a transparent degraded response" is specialised for BYOP in 4.2 item 5: same-provider model fallback is automatic, cross-destination fallback is a user decision.
-- #14's runbook for provider change and billing-limit outages is extended by section 11 (scenarios D, E).
+- #14's gateway layer (`src/ai/gateway.ts`) stays the only place gateway options are built. The vault calls the same adapter, so BYOP traffic gets `collectLog: false`, `skipCache: true`, the profile `requestTimeoutMs`, `retries.maxAttempts: 1`, and the hashed `workspace` tag. `AI_GATEWAY_REQUIRED="true"` makes BYOP fail closed (`not_configured`) if the gateway is missing, which is the posture production should use before BYOP is enabled.
+- Cost attribution: gateway metadata carries `profile`, `route`, the hashed workspace tag and `attempt`, plus the `credential: "workspace"` entry BYOP adds. The vault's ledger is the owner-facing record and the source for the cost view; gateway analytics are operator-facing.
+- #14's requirement that an outage gives "the documented fallback or a transparent degraded response" is specialised in 4.4: same-connection fallback is automatic; cross-destination fallback is a user decision, surfaced through the existing `degraded` object.
+- #32's runbooks (`docs/runbooks/model-outage.md`, `gateway-outage.md`, `billing-limit.md`, `provider-change.md`) need a BYOP section each; the BYOP-specific incident scenarios are in section 11. One interaction to write down: the gateway-outage runbook's emergency bypass removes `AI_GATEWAY_ID`, which also disables `externalProvidersEnabled`. With BYOP that is the correct outcome (all BYOP routes stop) and the runbook should say so.
 
 ## 10. Failures, billing visibility and logging
 
 ### 10.1 Error taxonomy (stable codes shown to the owner)
 
+These are #32's `ModelErrorCode` values plus the four BYOP additions (marked new). They flow through `describeModelFailure()` into the `degraded` object, so the UI path is the existing one.
+
 | Code | Cause | Retry? | Connection effect | Owner message |
 | --- | --- | --- | --- | --- |
-| `consent_required` | No matching consent or new class | — | none | "Confirm what's shared with `<provider>`." |
-| `cap_reached` | Daily request/token cap | — | `needs_attention` until next day or raised | "Your daily cap was reached." |
-| `auth_failed` | Provider 401/403 | **No** | `needs_attention` | "`<provider>` rejected the key. Replace it." |
-| `quota_exhausted` | Provider 402/billing/insufficient-quota | No | `needs_attention` | "Provider reports a billing or quota problem." |
-| `rate_limited` | Provider 429 with retry-after | Per #14 policy | none | "Provider is rate-limiting. Retry in N s." |
-| `timeout` | Profile timeout | Per #14 policy | none | "Provider didn't answer in time." |
-| `provider_unavailable` | 5xx / network | Per #14 policy | none (counted) | "Provider error. Try again, or retry on Workers AI." |
-| `gateway_error` | Gateway rejected/unavailable | Per #14 policy | none | "Routing error. Not your key." |
-| `egress_blocked` | Kill switch, revoked, provider disabled | — | none | "BYOP is turned off for this workspace." |
+| `consent_required` (new) | No matching consent or a class not yet consented | No | none | "Confirm what's shared with `<provider>`." |
+| `cap_reached` (new) | Daily request/token cap | No | `needs_attention` until next day or raised | "Your daily cap was reached." |
+| `credential_rejected` (new) | Provider 401/403. #32's `normalizeModelError` currently files this under `upstream` | **No** (add to `STOP_RETRYING`) | `needs_attention` | "`<provider>` rejected the key. Replace it." |
+| `connection_unavailable` (new) | Revoked, kill-switched, or provider disabled | No | none | "BYOP is turned off for this workspace." |
+| `billing_limit` | Provider 402 or a quota/billing message | No (already in `STOP_RETRYING`) | `needs_attention` | "Your provider reports a billing or quota problem." |
+| `rate_limited` | Provider 429 | Per `callWithPolicy` | none | "Provider is rate limiting. Retry shortly." |
+| `timeout` | Profile timeout | Per `callWithPolicy` | none | "Provider didn't answer in time." |
+| `unavailable` / `upstream` | 5xx, network, other | Per `callWithPolicy` | none (counted in the ledger) | "Provider error. Retry, or retry on Workers AI." |
+| `not_configured` | Gateway missing or misconfigured | No | none | "Routing is misconfigured. Not your key." |
+| `invalid_output` | Reply failed the structured-output validator | Per `callWithPolicy` | none | "The reply couldn't be used. Retry." |
+
+One weakness to fix while adding the new codes: `normalizeModelError` classifies partly by regex over `error.message` (`billing|quota|credit…`). A provider-controlled message can therefore steer classification. The BYOP adapter gets its code from the HTTP status first and falls back to message matching only for non-HTTP errors.
 
 Provider response bodies are classified and then **dropped**. Provider error bodies sometimes echo partial keys; the only things that leave the vault on failure are the code and, where useful, `retryAfter`.
 
 ### 10.2 Owner-visible surfaces
 
-A "Providers" panel shows per connection: status, last4, last success, last error **code** and when, today's requests / tokens / estimated cost against caps, and the ledger list from 8.3. Estimated cost is derived from the registry's price table and labelled an estimate; the provider's invoice is authoritative. Token counts come from provider-reported usage where present (for some providers, streaming requires opting in to usage reporting — Q7).
+A "Providers" panel shows per connection: status, last4, last success, last error **code** and when, today's requests / tokens / estimated cost against caps, and the ledger list from 8.3. Estimated cost comes from the registry entry's `cost.estimatedCostPerRequestUsd`, which is a flat per-request planning figure rather than a token price, so request-count caps are exact and dollar figures are rough, and the panel labels them as estimates; the provider's invoice is authoritative. Token counts come from provider-reported usage where present (for some providers, streaming requires opting in to usage reporting — Q7).
 
 ### 10.3 Logging rules
 
-1. No code outside `src/providers/` and `src/durable/providerVault.ts` constructs an `Authorization`/API-key header or calls `fetch` to a provider (enforced by a static test).
-2. Adapters throw `ProviderError(code)` with a constant message. Raw upstream errors are never used as `cause`.
-3. Extend `SAFE_METADATA_KEYS` with `connectionPrefix`, `providerId`, `profileId`, `errorCode` only. Workspace identity stays a 16-char prefix as today.
+1. No code outside `src/ai/providers/` and `src/durable/providerVault.ts` constructs an `Authorization`/API-key header or calls a provider (enforced by a static test). Today that is `gatewayExternal.ts`; the workspace-vault adapter holds no key at all.
+2. Errors that cross the vault boundary are `ModelError(code)` constructed **without `cause`**. Raw upstream errors never reach `logServerError`. (Also stop `logServerError` from printing `cause.message` for `ModelError`; that is P4.)
+3. `recordOperation` in #32 already carries `profile`, `provider`, the hashed `workspace` tag and `errorCode`. BYOP adds `connectionPrefix` (first 8 characters of the opaque connection id) to `SAFE_METADATA_KEYS` and nothing else. Workspace identity stays the existing tag or a 16-character prefix.
 4. Add a credential-pattern scrub to `normalizeLogString` (common key prefixes, `Bearer …`, long base64/hex runs after `key=`/`token=`). This is defence in depth; it will miss formats, which is why rule 2 is the actual control.
-5. `recordOperation` gains `providerId` and `errorCode` (both from fixed enums); `estimatedSpendUnits` already exists.
+5. `recordOperation`'s `provider` value for BYOP calls is `workspace-vault`; `estimatedCostUsd` and `errorCode` are already there.
 6. The vault's own `ledger` and `audit` are not logs and never get copied into logs.
 7. Never log request/response bodies, header maps, or `Request`/`Response` objects from the vault or adapters.
 
@@ -503,8 +554,8 @@ Roles are small here: **Operator** = the person with deploy and Cloudflare acces
 | Per connection | Owner: Revoke in UI. | Immediately (vault serialised) |
 | Per workspace | Operator: remove id from `BYOP_BETA_USERS`/`BYOP_APPROVED_WORKSPACES`, deploy. | On deploy (~minutes) |
 | Per provider | Registry `availability: "disabled"`, deploy. | On deploy |
-| Global | `BYOP_ENABLED=false` (var change or `wrangler secret put` for the same flag), deploy. | On deploy; egress returns `egress_blocked` |
-| Total | Disable the route to the gateway token: rotate/revoke `AI_GATEWAY_TOKEN`. | Immediately for all gateway traffic (also stops non-BYOP gateway traffic — last resort) |
+| Global | `BYOP_ENABLED=false` (var change or `wrangler secret put` for the same flag), deploy. | On deploy; egress returns `connection_unavailable` |
+| Total | Unset `AI_GATEWAY_ID` (with `AI_GATEWAY_REQUIRED` not `"true"`), or set `AI_EXTERNAL_PROVIDERS` to anything but `enabled`. This turns off `externalProvidersEnabled`, so **all** external traffic stops, BYOP and operator-keyed alike. | On deploy. Last resort: it also changes the platform's own routing posture, so record it as in `docs/runbooks/gateway-outage.md` |
 
 Before Phase 2 the operator should confirm how quickly a var change propagates in this deployment (Q9); the table assumes "minutes".
 
@@ -512,7 +563,7 @@ Before Phase 2 the operator should confirm how quickly a var change propagates i
 
 **A. Owner reports their provider key may be exposed (not necessarily LYTA's fault).**
 1. Owner revokes at the **provider** first (the only thing that actually kills the key), then in LYTA.
-2. Operator reviews that workspace's ledger/audit for unfamiliar usage and `auth_failed` spikes.
+2. Operator reviews that workspace's ledger/audit for unfamiliar usage and `credential_rejected` spikes.
 3. Owner rotates to a new key if they continue.
 
 **B. Suspected session theft / unauthorised BYOP changes.**
@@ -529,8 +580,8 @@ Before Phase 2 the operator should confirm how quickly a var change propagates i
 5. Preserve: Cloudflare audit log export, deploy history, the sweep output.
 
 **D. Provider outage or provider-side billing/quota event affecting many users.**
-1. Observe `provider_unavailable`/`quota_exhausted` rates in `recordOperation` metrics.
-2. Set the provider `availability: "degraded"` in the registry so the UI shows a banner; users decide whether to retry on Workers AI (new consent).
+1. Observe `unavailable`, `upstream` and `billing_limit` rates (`errorCode` on `[lyta-operation]` lines, grouped by `provider: workspace-vault`). Follow `docs/runbooks/model-outage.md` and `billing-limit.md` for the shared parts.
+2. Set the registry entry's `availability` to `"disabled"` (the registry has no "degraded" state today) and deploy; affected workspaces see `connection_unavailable`. Users decide whether to retry on Workers AI, a destination change that needs fresh disclosure.
 3. No automatic cross-destination fallback.
 
 **E. Runaway spend (cap breach, injection loop, theft).**
@@ -574,9 +625,11 @@ Tests follow the repo's existing style: `node:test` run through `tsx`, unit test
 | Test | Asserts |
 | --- | --- |
 | `byop-crypto.test.ts` | Round trip; tampered ciphertext/IV/AAD fail; ciphertext from workspace A fails to decrypt as workspace B; wrong KEK version fails; DEK wrap/unwrap; IVs are unique across N encryptions; non-extractable key import. |
-| `byop-errors.test.ts` | `classifyError` for every provider fixture (including bodies that echo a canary key) yields only the enum code; `ProviderError.message` is constant. |
+| `byop-errors.test.ts` | For every provider fixture, including response bodies that echo a canary key: the adapter yields only a `ModelError` code with a constant message and no `cause`; 401/403 map to `credential_rejected`; a provider message containing the word "quota" on a 401 does not become `billing_limit`. |
+| `byop-registry.test.ts` | `validateRegistry()` rejects a `workspace-vault` entry that lacks an evaluation, is not `external-processor`, uses another provider id, or appears in a profile's global `candidates`. `resolveProfile` never returns a `workspace-vault` entry without a matching workspace route, never returns it for `ai.title`/`ai.summary`/`ai.followups`, and never uses a `cloudflare-hosted` fallback for it. `routing.provider("workspace-vault")` never constructs the adapter that reads `AI_EXTERNAL_PROVIDER_KEY`. |
+| `byop-metadata.test.ts` | A BYOP-served response's `dataHandling` is the destination disclosure, never the "stays on Cloudflare" profile text. `GET /models/profiles` output is identical with and without a connected workspace. |
 | `byop-consent.test.ts` | Consent hash changes when text/classes/destination change; widening classes invalidates; egress without consent is refused. |
-| `log-redaction.test.ts` (extend) | Existing raw-`console` check stays; add: only `src/providers/**` and the vault build auth headers or call provider `fetch` (static scan); no provider adapter builds a URL containing a credential variable. |
+| `log-redaction.test.ts` (extend) | Existing raw-`console` check stays; add: only `src/ai/providers/**` and the vault build auth headers or call a provider (static scan); no adapter builds a URL containing a credential variable. |
 | `byop-logging.test.ts` | `logServerError`/`recordOperation` with an error whose message and cause contain a canary key never emit it (regression for P4). |
 
 ### 12.2 Integration (Durable Object level)
@@ -591,7 +644,7 @@ Tests follow the repo's existing style: `node:test` run through `tsx`, unit test
 | Revocation | Revoke → next chat produces zero outbound calls; revoke mid-stream aborts the in-flight fetch; concurrent revoke and egress never yields an outbound call after revoke returns; ciphertext is gone; context records, library and manifests are byte-identical before and after. |
 | Deletion | Delete-all empties vault storage; `Workspace` data unchanged. |
 | Rotation | Rotate swaps ciphertext atomically; old ciphertext unreadable; a failed validation leaves the old credential active; DEK rotation re-encrypts all connections; KEK rotation sweep rewraps and old KEK version can be removed without breaking any vault. |
-| Failure surfacing | Fake provider returning 401/402/429/5xx/timeouts, each with a body that contains the canary: owner-facing status shows the right code; canary absent everywhere; `auth_failed` is not retried; connection moves to `needs_attention`. |
+| Failure surfacing | Fake provider returning 401/402/429/5xx/timeouts, each with a body that contains the canary: owner-facing status shows the right code; canary absent everywhere; `credential_rejected` is not retried; connection moves to `needs_attention`. |
 | Caps | Exceeding the daily cap blocks before egress and flips status. |
 | CSRF/step-up | Mutations without `Origin`, with a foreign `Origin`, or with a wrong password fail and are rate-limited. |
 
@@ -601,7 +654,7 @@ One end-to-end run in `tests/smoke/` with a fake gateway: connect → consent �
 
 ### 12.4 Deployment/configuration checks (pre-enable, manual + scripted)
 
-- Gateway: logging off, caching off, authenticated-gateway on, verified with a test request that produces no gateway log entry.
+- Gateway: the gateway named by `AI_GATEWAY_ID` exists, `AI_GATEWAY_REQUIRED="true"`, and a test request through it produces no gateway log entry (`collectLog: false` is sent per call, but check the gateway-level setting too). #32 records that no real gateway has been exercised yet, so this item may be the first time.
 - `wrangler.jsonc` contains no secret values; `git grep` and secret scanning (GitHub push protection, plus a CI secret scanner) are green.
 - `pages/_headers` for the BYOP page: no third-party script hosts (T-S3).
 - Cookie flags and `Origin` enforcement observed in the deployed environment.
@@ -611,7 +664,7 @@ One end-to-end run in `tests/smoke/` with a fake gateway: connect → consent �
 Signed off in the PR that flips `BYOP_ENABLED` for production, by a reviewer other than the implementer:
 
 - [ ] Threat model in section 5 reviewed; additions recorded.
-- [ ] P1–P4 merged; #13/#14 merged and conforming to 4.2.
+- [ ] P1–P4 merged; PR #32 merged; the registry, provider-id and error-code changes in section 4.2 merged with their tests.
 - [ ] All tests in 12.1–12.3 green in CI; 12.4 verified on the target environment.
 - [ ] Runbook rehearsed once (scenario A and C) on staging; notes attached.
 - [ ] Penetration-style review of `/byop/*` routes: IDOR, CSRF, step-up bypass, error oracles, timing.
@@ -634,7 +687,7 @@ Signed off in the PR that flips `BYOP_ENABLED` for production, by a reviewer oth
 ### Implementation work, in order
 
 1. P1–P4 (session index/`logout-all`, step-up check, constant-time compare, log hardening). Independently useful, no BYOP dependency.
-2. #13/#14 merge with the adapter split in 4.2.
+2. PR #32 merges, then the section 4.2 changes in `src/ai/` (`workspace-vault` provider id, `credentialSource`, `workspaceRoutes` in `resolveProfile`, new error codes, metadata override), with the registry tests.
 3. `ProviderVault` + crypto module + unit tests (no routes yet).
 4. Consent and ledger in the vault; egress path behind the router and `BYOP_ENABLED=false`.
 5. Phase 1 (operator-provisioned) enabled for the operator's own workspace only; run the runbook drills.
@@ -643,10 +696,10 @@ Signed off in the PR that flips `BYOP_ENABLED` for production, by a reviewer oth
 
 ## 14. Open questions
 
-- **Q1. Which provider first?** Choice affects auth style (header only is a hard requirement, T-I4), usage reporting, retention terms. Needs the registry from #13 and an evaluation result from #16.
+- **Q1. Which provider first?** #32's external adapter speaks OpenAI-compatible `chat/completions` with `Authorization: Bearer`, so providers with a different auth scheme (a custom header, a query-string key) would need adapter work or are out of scope, and header-only auth is a hard requirement here (T-I4). Needs an evaluation result per #16 before any entry can be `enabled`.
 - **Q2. What is an "administrator"?** No admin concept exists. This design uses deploy-time config (an operator allowlist) rather than a new admin API, because an admin endpoint is a new high-value attack surface. If the product later needs more than one operator or in-app approvals, that needs its own design (identity, MFA, audit).
 - **Q3. KEK in a Worker Secret vs. an external KMS?** Secret is simpler and shares the Worker's trust level; KMS adds a second authority but needs its own credential. Revisit after Phase 2.
-- **Q4. Exact AI Gateway capabilities.** Verify against current docs: per-request log/cache opt-out headers, authenticated gateway token header, metadata header limits, whether BYOK/Secrets Store aliases are usable for operator keys in Phase 1, and gateway-side retention regardless of headers.
+- **Q4. Gateway behaviour in practice.** #32 uses the `AI` binding's `gateway(id).run(...)` with `collectLog`, `skipCache`, `requestTimeoutMs`, `retries` and `metadata` (max five entries) per call, and notes that no real gateway has been created. To confirm on a real gateway: that `collectLog: false` really produces no stored log, whether gateway-level retention applies regardless, whether BYOK-stored keys are usable for operator keys in Phase 1, and how the provider's `Authorization` header is treated in gateway diagnostics.
 - **Q5. Should there be a "provider-only" strict mode** that disables Workers AI for titles/summaries/follow-ups (and what do we lose)? Embeddings cannot move without re-indexing.
 - **Q6. Show `last4`, a fingerprint, or nothing?** Usability vs. 4 characters of entropy.
 - **Q7. Usage reporting through streams.** Some providers require an opt-in to include usage in streaming responses; without it the token cap relies on estimates (the router already estimates `chars/4` for its own limiter).
@@ -655,4 +708,5 @@ Signed off in the PR that flips `BYOP_ENABLED` for production, by a reviewer oth
 - **Q10. Production R2 bucket naming** (`lyta-artifacts-preview` is both `bucket_name` and `preview_bucket_name` in `wrangler.jsonc`). Not BYOP-specific, but BYOP's content-class claims assume R2 is a production-grade store.
 - **Q11. Provider terms.** Does each provider's terms permit a third-party app to hold and use a customer's key? Needs a per-provider legal read before approval.
 - **Q12. Data residency.** If the user is in a jurisdiction where sending project material to a US provider matters, the consent screen needs the provider's region, and the registry needs to carry it.
-- **Q13. Migration tag coordination.** `ProviderVault` needs a new DO migration; #13/#14 may add classes too. Merge order decides tags.
+- **Q13. Migration tag coordination.** PR #32 adds no Durable Object class or migration, so `v5` is the next free tag on `main` today; other open branches may claim it first. Merge order decides.
+- **Q14. Who changes `src/ai/`?** Section 4.2 asks for edits to PR #32's registry, types and `planCall`. Either BYOP's implementation PR makes them after #32 merges (recommended, so #32 stays reviewable on its own terms), or #32 grows. The model-platform owner should confirm the proposed names (`workspace-vault`, `credentialSource`, `workspaceRoutes`) before they are built.
