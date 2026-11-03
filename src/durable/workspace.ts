@@ -9,6 +9,7 @@ import {
   type ContextSelectionManifest,
   type ProjectContextRecord
 } from "../context/projectContext"
+import type { ArchitectureReview, FindingDisposition } from "../review/contract"
 
 interface WorkspaceProfile {
   name: string
@@ -74,6 +75,7 @@ const MAX_LIBRARY_CHUNKS = 300
 const MAX_ARTIFACT_BYTES = 2_400_000
 const MAX_WORKSPACE_ARTIFACT_BYTES = 12_000_000
 const LIBRARY_PAGE_SIZE = 20
+const MAX_REVIEWS = 50
 
 export class Workspace {
   state: DurableObjectState
@@ -162,6 +164,22 @@ export class Workspace {
 
     if (path === "/context/manifests" && request.method === "GET") {
       return this.getContextManifests(request)
+    }
+
+    if (path === "/reviews" && request.method === "GET") {
+      return this.listReviews()
+    }
+
+    if (path === "/reviews/get" && request.method === "POST") {
+      return this.getReview(request)
+    }
+
+    if (path === "/reviews/save" && request.method === "POST") {
+      return this.queue(() => this.saveReview(request))
+    }
+
+    if (path === "/reviews/disposition" && request.method === "POST") {
+      return this.queue(() => this.setFindingDisposition(request))
     }
 
     return new Response("Not Found", { status: 404 })
@@ -561,7 +579,9 @@ export class Workspace {
       chunks.filter((chunk) => chunk.fileId !== body.id)
     )
 
-    return Response.json({ ok: true, deletionImpact })
+    const affectedReviews = await this.removeReviewEvidence(body.id)
+
+    return Response.json({ ok: true, deletionImpact: { ...deletionImpact, affectedReviews } })
   }
 
   private async workspaceScope() {
@@ -637,6 +657,7 @@ export class Workspace {
       topK?: number
       requestId?: string
       policyVersion?: string
+      sourceFileIds?: string[]
     }
 
     const queryVector = Array.isArray(body.queryVector) ? body.queryVector.filter((value) => typeof value === "number") : []
@@ -648,7 +669,16 @@ export class Workspace {
       })
     }
 
-    const chunks = (await this.state.storage.get<WorkspaceChunk[]>("libraryChunks")) || []
+    let chunks = (await this.state.storage.get<WorkspaceChunk[]>("libraryChunks")) || []
+    // A review scopes retrieval to the sources the user selected. Ids that are
+    // not in this workspace's library (deleted, or another workspace's) are
+    // reported back rather than silently ignored.
+    const scope = Array.isArray(body.sourceFileIds) ? await this.resolveSelectedSources(body.sourceFileIds) : null
+
+    if (scope) {
+      const selectedIds = new Set(scope.selectedSources.map((source) => source.fileId))
+      chunks = chunks.filter((chunk) => selectedIds.has(chunk.fileId))
+    }
 
     const result = buildLibrarySearchResult(queryVector, chunks, typeof body.topK === "number" ? body.topK : 4)
 
@@ -658,7 +688,7 @@ export class Workspace {
       citations: result.citations
     })
 
-    return Response.json(result)
+    return Response.json(scope ? { ...result, ...scope } : result)
   }
 
   private async getContext(request: Request) {
@@ -684,12 +714,26 @@ export class Workspace {
     const body = (await request.json()) as Partial<ProjectContextRecord> & {
       provenance?: Partial<ContextProvenance>
     }
+    const record = await this.writeContextRecord(body)
+
+    if (!record) {
+      return new Response("A context kind, title, and content are required", { status: 400 })
+    }
+
+    return Response.json({ record: toContextRecordMetadata(record) })
+  }
+
+  private async writeContextRecord(
+    body: Omit<Partial<ProjectContextRecord>, "provenance"> & {
+      provenance?: Partial<ContextProvenance>
+    }
+  ) {
     const kind = normalizeContextKind(body.kind)
     const title = normalizeText(body.title, 160)
     const content = normalizeTextBlock(body.content, 12_000)
 
     if (!kind || !title || !content) {
-      return new Response("A context kind, title, and content are required", { status: 400 })
+      return null
     }
 
     const scope = await this.workspaceScope()
@@ -723,7 +767,7 @@ export class Workspace {
       "projectContextRecords",
       [record, ...records.filter((candidate) => candidate.id !== record.id)].slice(0, 200)
     )
-    return Response.json({ record: toContextRecordMetadata(record) })
+    return record
   }
 
   private async deleteContextRecord(request: Request) {
@@ -787,6 +831,170 @@ export class Workspace {
     const manifests = await this.loadContextManifests()
     manifests.unshift(manifest)
     await this.state.storage.put("contextSelectionManifests", manifests.slice(0, 200))
+  }
+
+  private async resolveSelectedSources(sourceFileIds: unknown[]) {
+    const library = await this.loadLibrary()
+    const requested = uniqueIds(sourceFileIds, 20)
+    const selectedSources = requested
+      .map((fileId) => library.find((file) => file.id === fileId))
+      .filter((file): file is StoredLibraryFile => Boolean(file))
+      .map((file) => ({ fileId: file.id, fileName: file.attachment.name, sourceVersionId: file.sourceVersionId }))
+
+    return {
+      selectedSources,
+      unavailableSourceFileIds: requested.filter((fileId) => !selectedSources.some((source) => source.fileId === fileId))
+    }
+  }
+
+  private async listReviews() {
+    const reviews = await this.loadReviews()
+
+    return Response.json({
+      reviews: reviews.map((review) => ({
+        id: review.id,
+        title: normalizeText(review.input.proposedChange, 90),
+        readiness: review.readiness,
+        findingCount: review.findings.length,
+        createdAt: review.createdAt,
+        updatedAt: review.updatedAt
+      }))
+    })
+  }
+
+  private async getReview(request: Request) {
+    const body = (await request.json()) as { id?: string }
+    const review = (await this.loadReviews()).find((candidate) => candidate.id === normalizeText(body.id, 120))
+
+    if (!review) {
+      return new Response("Review not found", { status: 404 })
+    }
+
+    return Response.json({ review })
+  }
+
+  private async saveReview(request: Request) {
+    const body = (await request.json()) as { review?: Omit<ArchitectureReview, "id" | "createdAt" | "updatedAt"> }
+
+    if (!body.review || !Array.isArray(body.review.findings) || !body.review.input) {
+      return new Response("Invalid review", { status: 400 })
+    }
+
+    const now = new Date().toISOString()
+    const review: ArchitectureReview = {
+      ...body.review,
+      id: createId("review"),
+      createdAt: now,
+      updatedAt: now
+    }
+    const reviews = await this.loadReviews()
+
+    await this.state.storage.put("architectureReviews", [review, ...reviews].slice(0, MAX_REVIEWS))
+
+    return Response.json({ review })
+  }
+
+  /**
+   * Accepting a finding promotes it into the canonical project context as a
+   * `finding` record with chunk-level provenance, so deleting a cited source
+   * invalidates it like any other derived record. Rejecting it, or returning
+   * it to unresolved, removes that record again.
+   */
+  private async setFindingDisposition(request: Request) {
+    const body = (await request.json()) as {
+      id?: string
+      findingId?: string
+      disposition?: FindingDisposition
+      note?: string
+    }
+    const reviews = await this.loadReviews()
+    const review = reviews.find((candidate) => candidate.id === normalizeText(body.id, 120))
+    const finding = review?.findings.find((candidate) => candidate.id === normalizeText(body.findingId, 20))
+
+    if (!review || !finding) {
+      return new Response("Finding not found", { status: 404 })
+    }
+
+    const now = new Date().toISOString()
+    finding.disposition = body.disposition === "accepted" || body.disposition === "rejected" ? body.disposition : "unresolved"
+    finding.dispositionNote = normalizeTextBlock(body.note, 500)
+    finding.dispositionUpdatedAt = now
+
+    if (finding.disposition === "accepted") {
+      const cited = review.evidence.filter((item) => finding.citationIds.includes(item.chunkId) && !item.sourceDeleted)
+      const record = await this.writeContextRecord({
+        id: finding.contextRecordId || undefined,
+        kind: "finding",
+        title: finding.title,
+        content: [
+          `Classification: ${finding.classification}`,
+          `Affected area: ${finding.areaType}${finding.area ? ` — ${finding.area}` : ""}`,
+          finding.detail,
+          finding.dispositionNote ? `Reviewer note: ${finding.dispositionNote}` : "",
+          `Accepted from architecture review ${review.id}.`
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        provenance: {
+          sourceFileIds: cited.map((item) => item.fileId),
+          sourceVersionIds: review.sources
+            .filter((source) => cited.some((item) => item.fileId === source.fileId))
+            .map((source) => source.sourceVersionId),
+          chunkIds: cited.map((item) => item.chunkId)
+        }
+      })
+      finding.contextRecordId = record?.id || null
+    } else if (finding.contextRecordId) {
+      const records = await this.loadContextRecords()
+      await this.state.storage.put(
+        "projectContextRecords",
+        records.filter((record) => record.id !== finding.contextRecordId)
+      )
+      finding.contextRecordId = null
+    }
+
+    review.updatedAt = now
+    await this.state.storage.put("architectureReviews", reviews)
+
+    return Response.json({ review, finding })
+  }
+
+  /**
+   * Deleting a source clears its excerpts from stored reviews. The finding
+   * text and citation ids stay so the review history remains auditable, but
+   * the deleted content itself is no longer retained or exported.
+   */
+  private async removeReviewEvidence(fileId: string) {
+    const reviews = await this.loadReviews()
+    const recordIds = new Set((await this.loadContextRecords()).map((record) => record.id))
+    let affected = 0
+
+    for (const review of reviews) {
+      const deleted = review.evidence.filter((item) => item.fileId === fileId)
+      if (!deleted.length) continue
+
+      affected += 1
+      for (const item of deleted) {
+        item.sourceDeleted = true
+        item.snippet = ""
+      }
+      for (const finding of review.findings) {
+        if (finding.contextRecordId && !recordIds.has(finding.contextRecordId)) {
+          finding.contextRecordId = null
+        }
+      }
+      review.updatedAt = new Date().toISOString()
+    }
+
+    if (affected) {
+      await this.state.storage.put("architectureReviews", reviews)
+    }
+
+    return affected
+  }
+
+  private async loadReviews() {
+    return (await this.state.storage.get<ArchitectureReview[]>("architectureReviews")) || []
   }
 
   private async loadContextRecords() {
