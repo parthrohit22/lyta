@@ -226,6 +226,8 @@ This is one of the more distinctive parts of the project because it moves the ap
 
 This is compact, but it still demonstrates responsible state partitioning.
 
+Planned, not yet implemented: connecting a user's own model provider. The credential lifecycle, envelope-encryption boundary, revocation, rotation and incident-response design is in [`docs/design/byop.md`](docs/design/byop.md).
+
 ## Engineering Challenges
 
 - maintaining state correctness while streaming assistant replies

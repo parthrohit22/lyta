@@ -336,6 +336,10 @@ Deleting a source also removes derived context records linked to that source
 and returns the affected-record count. Historical ID-only manifests remain as
 audit evidence; deleted source text is not retrievable.
 
+## Design docs
+
+- [`docs/design/byop.md`](docs/design/byop.md): Bring Your Own Provider without exposing credentials (design only, not implemented; tracked in #15).
+
 ## Roadmap Ideas
 
 - OCR for scanned PDFs and image-heavy documents
