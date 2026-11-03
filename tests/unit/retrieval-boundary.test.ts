@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { buildConversationMessages } from "../../src/chat/messages"
 import { buildLibrarySearchResult } from "../../src/library/chunks"
+import { MIN_LIBRARY_SCORE } from "../../src/retrieval/vectorStore"
+import { isSelfReferentialQuery, retrieveContext } from "../../src/services/retriever"
 import { logServerError } from "../../src/utils/serverErrors"
 
 test("retrieved instructions stay in a delimited user-data block", () => {
@@ -47,9 +49,9 @@ test("zero-magnitude or invalid vectors do not produce NaN retrieval scores", ()
     [{ id: "chunk-zero", fileId: "file-zero", fileName: "zero.txt", text: "zero vector", vector: [0, 0] }],
     2
   )
-  assert.equal(scored.citations[0]?.fileId, "file-zero")
-  assert.equal(scored.citations[0]?.snippet, "zero vector")
-  assert.equal(scored.context.includes("zero vector"), true)
+  // A zero-magnitude vector has no meaningful similarity, so it must not be cited.
+  assert.deepEqual(scored.citations, [])
+  assert.equal(scored.context, "")
 
   const mixed = buildLibrarySearchResult(
     [1, 0],
@@ -63,6 +65,57 @@ test("zero-magnitude or invalid vectors do not produce NaN retrieval scores", ()
   assert.equal(mixed.citations[0]?.fileId, "file-match")
   assert.equal(mixed.citations[0]?.snippet, "good match")
   assert.ok(mixed.context.includes("good match"))
+  assert.equal(mixed.citations.length, 1)
+})
+
+test("library chunks below the similarity floor are not cited", () => {
+  const unrelated = buildLibrarySearchResult(
+    [1, 0],
+    [{ id: "chunk-far", fileId: "file-far", fileName: "far.txt", text: "unrelated text", vector: [0.5, 0.866] }],
+    4
+  )
+
+  // Calibrated floor: unrelated questions reached 0.686 against real bge-base embeddings.
+  assert.ok(MIN_LIBRARY_SCORE > 0.686)
+  assert.deepEqual(unrelated.citations, [])
+  assert.equal(unrelated.context, "")
+
+  const mixed = buildLibrarySearchResult(
+    [1, 0],
+    [
+      { id: "chunk-far", fileId: "file-far", fileName: "far.txt", text: "unrelated text", vector: [0.5, 0.866] },
+      { id: "chunk-near", fileId: "file-near", fileName: "near.txt", text: "related text", vector: [0.9, 0.1] }
+    ],
+    4
+  )
+
+  assert.deepEqual(
+    mixed.citations.map((citation) => citation.id),
+    ["chunk-near"]
+  )
+  assert.doesNotMatch(mixed.context, /unrelated text/)
+})
+
+test("built-in LYTA knowledge is only retrieved for questions about LYTA", async () => {
+  const calls: string[] = []
+  const env = {
+    AI: {
+      run: async (_model: string, input: { text: string }) => {
+        calls.push(input.text)
+        return { data: [[1, 0]] }
+      }
+    }
+  } as unknown as Parameters<typeof retrieveContext>[0]
+
+  assert.equal(await retrieveContext(env, "What is a Durable Object in one sentence?"), "")
+  assert.equal(calls.length, 0, "general questions should not embed or inject LYTA self-knowledge")
+
+  assert.equal(isSelfReferentialQuery("How does LYTA store conversation state?"), true)
+  assert.equal(isSelfReferentialQuery("Explain catalytic converters"), false)
+
+  const context = await retrieveContext(env, "How does LYTA store conversation state?")
+  assert.ok(context.length > 0)
+  assert.ok(calls.length > 0)
 })
 
 test("diagnostic metadata excludes prompt and file-body fields", () => {

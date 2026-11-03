@@ -1,4 +1,4 @@
-export const CONTEXT_SELECTION_POLICY_VERSION = "2026-08-21"
+export const CONTEXT_SELECTION_POLICY_VERSION = "2026-11-03"
 
 export type ProjectContextKind = "finding" | "decision" | "summary"
 
