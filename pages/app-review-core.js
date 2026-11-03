@@ -16,6 +16,27 @@ window.LytaReview = (() => {
         { value: "rejected", label: "Reject" },
         { value: "unresolved", label: "Unresolved" }
     ];
+    const RECORD_KINDS = [
+        { value: "finding", label: "Finding" },
+        { value: "decision", label: "Decision" },
+        { value: "risk", label: "Risk" },
+        { value: "assumption", label: "Assumption" },
+        { value: "follow-up", label: "Follow-up" }
+    ];
+    const CONTEXT_KIND_LABELS = {
+        decision: "Decisions",
+        risk: "Risks",
+        assumption: "Assumptions",
+        "follow-up": "Follow-ups",
+        finding: "Findings",
+        summary: "Summaries"
+    };
+    const CHALLENGE_OUTCOME_LABELS = {
+        upheld: "Upheld",
+        revised: "Revised",
+        withdrawn: "Withdrawn",
+        "insufficient evidence": "Insufficient evidence"
+    };
     function asRecord(value) {
         return value && typeof value === "object" && !Array.isArray(value) ? value : {};
     }
@@ -49,8 +70,52 @@ window.LytaReview = (() => {
             citationIds: asTextList(record.citationIds),
             adjustments: asTextList(record.adjustments),
             disposition: pick(record.disposition, ["accepted", "rejected", "unresolved"], "unresolved"),
-            dispositionNote: asText(record.dispositionNote)
+            dispositionNote: asText(record.dispositionNote),
+            recordKind: record.recordKind
+                ? pick(record.recordKind, ["finding", "decision", "risk", "assumption", "follow-up"], "finding")
+                : null,
+            withdrawn: record.withdrawn === true,
+            challenges: (Array.isArray(record.challenges) ? record.challenges : []).map(normalizeChallenge)
         };
+    }
+    function normalizeChallenge(value) {
+        const record = asRecord(value);
+        return {
+            id: asText(record.id),
+            createdAt: asText(record.createdAt),
+            reason: asText(record.reason),
+            outcome: pick(record.outcome, ["upheld", "revised", "withdrawn", "insufficient evidence"], "insufficient evidence"),
+            conclusionChanged: record.conclusionChanged === true,
+            rationale: asText(record.rationale),
+            counterEvidenceIds: asTextList(record.counterEvidenceIds),
+            beforeTitle: asText(asRecord(record.before).title),
+            afterTitle: asText(asRecord(record.after).title),
+            adjustments: asTextList(record.adjustments)
+        };
+    }
+    /** Context records from GET /context?includeContent=true, newest first, with source ids resolved to names. */
+    function normalizeContextRecords(value) {
+        const data = asRecord(value);
+        const sourceNames = new Map((Array.isArray(data.sources) ? data.sources : []).map((source) => [asText(asRecord(source).id), asText(asRecord(source).name)]));
+        return (Array.isArray(data.records) ? data.records : [])
+            .map((item) => {
+            const record = asRecord(item);
+            const origin = asRecord(record.origin);
+            return {
+                id: asText(record.id),
+                kind: asText(record.kind) || "finding",
+                title: asText(record.title),
+                content: asText(record.content),
+                sourceNames: asTextList(asRecord(record.provenance).sourceFileIds)
+                    .map((id) => sourceNames.get(id) || "")
+                    .filter(Boolean),
+                reviewId: asText(origin.reviewId),
+                findingId: asText(origin.findingId),
+                updatedAt: asText(record.updatedAt)
+            };
+        })
+            .filter((record) => record.id && record.title)
+            .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
     }
     function normalizeReview(value) {
         const record = asRecord(value);
@@ -75,6 +140,9 @@ window.LytaReview = (() => {
             observability: asTextList(record.observability),
             rollback: asTextList(record.rollback),
             missingEvidence: asTextList(record.missingEvidence),
+            assumptions: asTextList(record.assumptions),
+            openQuestions: asTextList(record.openQuestions),
+            nextActions: asTextList(record.nextActions),
             adjustments: asTextList(record.adjustments),
             evidence: (Array.isArray(record.evidence) ? record.evidence : []).map((evidence) => {
                 const item = asRecord(evidence);
@@ -116,14 +184,22 @@ window.LytaReview = (() => {
     function findingPath(reviewId, findingId) {
         return `${reviewPath(reviewId)}/findings/${encodeURIComponent(findingId)}`;
     }
+    function challengePath(reviewId, findingId) {
+        return `${findingPath(reviewId, findingId)}/challenge`;
+    }
     return {
         READINESS_LABELS,
         CLASSIFICATION_LABELS,
         DISPOSITIONS,
+        RECORD_KINDS,
+        CONTEXT_KIND_LABELS,
+        CHALLENGE_OUTCOME_LABELS,
         normalizeReview,
+        normalizeContextRecords,
         normalizeReviewSummaries,
         getFindingEvidence,
         reviewPath,
-        findingPath
+        findingPath,
+        challengePath
     };
 })();

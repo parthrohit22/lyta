@@ -3,6 +3,8 @@
 type ReviewReadiness = "ready" | "needs evidence" | "blocked"
 type FindingClassification = "evidence-backed" | "inference" | "recommendation" | "insufficient evidence"
 type FindingDisposition = "accepted" | "rejected" | "unresolved"
+type FindingRecordKind = "finding" | "decision" | "risk" | "assumption" | "follow-up"
+type ChallengeOutcome = "upheld" | "revised" | "withdrawn" | "insufficient evidence"
 
 interface ReviewEvidenceView {
   ref: string
@@ -24,6 +26,33 @@ interface ReviewFindingView {
   adjustments: string[]
   disposition: FindingDisposition
   dispositionNote: string
+  recordKind: FindingRecordKind | null
+  withdrawn: boolean
+  challenges: FindingChallengeView[]
+}
+
+interface FindingChallengeView {
+  id: string
+  createdAt: string
+  reason: string
+  outcome: ChallengeOutcome
+  conclusionChanged: boolean
+  rationale: string
+  counterEvidenceIds: string[]
+  beforeTitle: string
+  afterTitle: string
+  adjustments: string[]
+}
+
+interface ContextRecordView {
+  id: string
+  kind: string
+  title: string
+  content: string
+  sourceNames: string[]
+  reviewId: string
+  findingId: string
+  updatedAt: string
 }
 
 interface ReviewView {
@@ -37,6 +66,9 @@ interface ReviewView {
   observability: string[]
   rollback: string[]
   missingEvidence: string[]
+  assumptions: string[]
+  openQuestions: string[]
+  nextActions: string[]
   adjustments: string[]
   evidence: ReviewEvidenceView[]
   sourceNames: string[]
@@ -55,11 +87,16 @@ interface LytaReviewApi {
   READINESS_LABELS: Record<ReviewReadiness, string>
   CLASSIFICATION_LABELS: Record<FindingClassification, string>
   DISPOSITIONS: Array<{ value: FindingDisposition; label: string }>
+  RECORD_KINDS: Array<{ value: FindingRecordKind; label: string }>
+  CONTEXT_KIND_LABELS: Record<string, string>
+  CHALLENGE_OUTCOME_LABELS: Record<ChallengeOutcome, string>
   normalizeReview(value: unknown): ReviewView | null
+  normalizeContextRecords(value: unknown): ContextRecordView[]
   normalizeReviewSummaries(value: unknown): ReviewSummaryView[]
   getFindingEvidence(review: ReviewView, finding: ReviewFindingView): ReviewEvidenceView[]
   reviewPath(reviewId: string, suffix?: "export"): string
   findingPath(reviewId: string, findingId: string): string
+  challengePath(reviewId: string, findingId: string): string
 }
 
 interface Window {
@@ -85,6 +122,30 @@ window.LytaReview = ((): LytaReviewApi => {
     { value: "rejected", label: "Reject" },
     { value: "unresolved", label: "Unresolved" }
   ]
+
+  const RECORD_KINDS: Array<{ value: FindingRecordKind; label: string }> = [
+    { value: "finding", label: "Finding" },
+    { value: "decision", label: "Decision" },
+    { value: "risk", label: "Risk" },
+    { value: "assumption", label: "Assumption" },
+    { value: "follow-up", label: "Follow-up" }
+  ]
+
+  const CONTEXT_KIND_LABELS: Record<string, string> = {
+    decision: "Decisions",
+    risk: "Risks",
+    assumption: "Assumptions",
+    "follow-up": "Follow-ups",
+    finding: "Findings",
+    summary: "Summaries"
+  }
+
+  const CHALLENGE_OUTCOME_LABELS: Record<ChallengeOutcome, string> = {
+    upheld: "Upheld",
+    revised: "Revised",
+    withdrawn: "Withdrawn",
+    "insufficient evidence": "Insufficient evidence"
+  }
 
   function asRecord(value: unknown): Record<string, unknown> {
     return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
@@ -130,8 +191,58 @@ window.LytaReview = ((): LytaReviewApi => {
       citationIds: asTextList(record.citationIds),
       adjustments: asTextList(record.adjustments),
       disposition: pick(record.disposition, ["accepted", "rejected", "unresolved"] as const, "unresolved"),
-      dispositionNote: asText(record.dispositionNote)
+      dispositionNote: asText(record.dispositionNote),
+      recordKind: record.recordKind
+        ? pick(record.recordKind, ["finding", "decision", "risk", "assumption", "follow-up"] as const, "finding")
+        : null,
+      withdrawn: record.withdrawn === true,
+      challenges: (Array.isArray(record.challenges) ? record.challenges : []).map(normalizeChallenge)
     }
+  }
+
+  function normalizeChallenge(value: unknown): FindingChallengeView {
+    const record = asRecord(value)
+
+    return {
+      id: asText(record.id),
+      createdAt: asText(record.createdAt),
+      reason: asText(record.reason),
+      outcome: pick(record.outcome, ["upheld", "revised", "withdrawn", "insufficient evidence"] as const, "insufficient evidence"),
+      conclusionChanged: record.conclusionChanged === true,
+      rationale: asText(record.rationale),
+      counterEvidenceIds: asTextList(record.counterEvidenceIds),
+      beforeTitle: asText(asRecord(record.before).title),
+      afterTitle: asText(asRecord(record.after).title),
+      adjustments: asTextList(record.adjustments)
+    }
+  }
+
+  /** Context records from GET /context?includeContent=true, newest first, with source ids resolved to names. */
+  function normalizeContextRecords(value: unknown): ContextRecordView[] {
+    const data = asRecord(value)
+    const sourceNames = new Map(
+      (Array.isArray(data.sources) ? data.sources : []).map((source) => [asText(asRecord(source).id), asText(asRecord(source).name)])
+    )
+
+    return (Array.isArray(data.records) ? data.records : [])
+      .map((item) => {
+        const record = asRecord(item)
+        const origin = asRecord(record.origin)
+        return {
+          id: asText(record.id),
+          kind: asText(record.kind) || "finding",
+          title: asText(record.title),
+          content: asText(record.content),
+          sourceNames: asTextList(asRecord(record.provenance).sourceFileIds)
+            .map((id) => sourceNames.get(id) || "")
+            .filter(Boolean),
+          reviewId: asText(origin.reviewId),
+          findingId: asText(origin.findingId),
+          updatedAt: asText(record.updatedAt)
+        }
+      })
+      .filter((record) => record.id && record.title)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   }
 
   function normalizeReview(value: unknown): ReviewView | null {
@@ -160,6 +271,9 @@ window.LytaReview = ((): LytaReviewApi => {
       observability: asTextList(record.observability),
       rollback: asTextList(record.rollback),
       missingEvidence: asTextList(record.missingEvidence),
+      assumptions: asTextList(record.assumptions),
+      openQuestions: asTextList(record.openQuestions),
+      nextActions: asTextList(record.nextActions),
       adjustments: asTextList(record.adjustments),
       evidence: (Array.isArray(record.evidence) ? record.evidence : []).map((evidence) => {
         const item = asRecord(evidence)
@@ -206,14 +320,23 @@ window.LytaReview = ((): LytaReviewApi => {
     return `${reviewPath(reviewId)}/findings/${encodeURIComponent(findingId)}`
   }
 
+  function challengePath(reviewId: string, findingId: string): string {
+    return `${findingPath(reviewId, findingId)}/challenge`
+  }
+
   return {
     READINESS_LABELS,
     CLASSIFICATION_LABELS,
     DISPOSITIONS,
+    RECORD_KINDS,
+    CONTEXT_KIND_LABELS,
+    CHALLENGE_OUTCOME_LABELS,
     normalizeReview,
+    normalizeContextRecords,
     normalizeReviewSummaries,
     getFindingEvidence,
     reviewPath,
-    findingPath
+    findingPath,
+    challengePath
   }
 })()
