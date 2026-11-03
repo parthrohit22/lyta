@@ -1,4 +1,4 @@
-import { searchVectors } from "../retrieval/vectorStore"
+import { MIN_LIBRARY_SCORE, searchVectors } from "../retrieval/vectorStore"
 
 export interface WorkspaceChunk {
   id: string
@@ -67,7 +67,12 @@ export function chunkDocumentText(text: string) {
   return chunks.slice(0, 24)
 }
 
-export function buildLibrarySearchResult(queryVector: number[], chunks: WorkspaceChunk[], topK: number = 4): LibrarySearchResult {
+export function buildLibrarySearchResult(
+  queryVector: number[],
+  chunks: WorkspaceChunk[],
+  topK: number = 4,
+  minScore: number = MIN_LIBRARY_SCORE
+): LibrarySearchResult {
   if (!chunks.length) {
     return {
       context: "",
@@ -75,7 +80,7 @@ export function buildLibrarySearchResult(queryVector: number[], chunks: Workspac
     }
   }
 
-  const scored = searchVectors(queryVector, chunks, topK)
+  const scored = searchVectors(queryVector, chunks, topK, minScore)
   const citations = scored.map((chunk, index) => {
     return {
       id: chunk.id,

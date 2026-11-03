@@ -1,6 +1,6 @@
 import type { Env } from "../index"
 import { createEmbedding } from "./embeddings"
-import { searchVectors } from "../retrieval/vectorStore"
+import { MIN_KNOWLEDGE_SCORE, searchVectors } from "../retrieval/vectorStore"
 import { knowledgeBase } from "../docs/knowledge"
 
 interface EmbeddedKnowledgeDoc {
@@ -26,11 +26,25 @@ function embedDocs(env: Pick<Env, "AI">) {
   return embeddedDocsPromise
 }
 
+/**
+ * The built-in knowledge base only describes LYTA itself. Injecting it into
+ * general questions ("what is a Durable Object?") makes the model repeat
+ * LYTA's self-description as if it were a general definition, so it is only
+ * consulted when the user asks about LYTA by name.
+ */
+export function isSelfReferentialQuery(query: string) {
+  return /\blyta\b/i.test(query)
+}
+
 export async function retrieveContext(env: Pick<Env, "AI">, query: string) {
+  if (!isSelfReferentialQuery(query)) {
+    return ""
+  }
+
   try {
     const docs = await embedDocs(env)
     const queryVector = await createEmbedding(env, query)
-    const results = searchVectors(queryVector, docs, 2)
+    const results = searchVectors(queryVector, docs, 2, MIN_KNOWLEDGE_SCORE)
 
     return results.map((r) => r.text).join("\n")
   } catch (error) {
