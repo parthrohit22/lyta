@@ -15,7 +15,7 @@
 <script src="/app.js" defer></script>
 <script src="/app-review.js" defer></script>
 </head>
-<body>
+<body class="view-review">
 
 <svg class="svg-sprite" hidden aria-hidden="true">
   <symbol id="icon-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></symbol>
@@ -36,12 +36,12 @@
   <symbol id="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
 </svg>
 
-<a class="skip-link" href="#composer">Skip to composer</a>
+<a class="skip-link" href="#workspaceGrid">Skip to main content</a>
 
 <div id="appShell">
   <div id="sidebarBackdrop" class="overlay" hidden></div>
 
-  <aside id="sidebar" aria-label="Chats and files">
+  <aside id="sidebar" aria-label="Reviews, records, files, and chats">
     <div class="sidebar-top">
       <div class="brand-block">
         <span class="brand-mark" aria-hidden="true">L</span>
@@ -52,19 +52,19 @@
       </button>
     </div>
 
-    <button id="newChat" class="primary-button full-width" type="button" aria-label="Create new chat">
-      <svg class="icon" aria-hidden="true"><use href="#icon-plus"></use></svg>
-      <span class="sidebar-label">New Chat</span>
-    </button>
-
-    <button id="openReview" class="secondary-button full-width" type="button" aria-label="Review a change" aria-haspopup="dialog">
+    <button id="openReview" class="primary-button full-width" type="button" aria-label="Review a change">
       <svg class="icon" aria-hidden="true"><use href="#icon-review"></use></svg>
       <span class="sidebar-label">Review a change</span>
     </button>
 
-    <button id="openRecords" class="secondary-button full-width" type="button" aria-label="Project records" aria-haspopup="dialog">
+    <button id="openRecords" class="secondary-button full-width" type="button" aria-label="Project records">
       <svg class="icon" aria-hidden="true"><use href="#icon-bookmark"></use></svg>
       <span class="sidebar-label">Project records</span>
+    </button>
+
+    <button id="newChat" class="secondary-button full-width" type="button" aria-label="Create new chat">
+      <svg class="icon" aria-hidden="true"><use href="#icon-plus"></use></svg>
+      <span class="sidebar-label">New Chat</span>
     </button>
 
     <div class="sidebar-scroll">
@@ -75,6 +75,22 @@
         </div>
         <p id="workspaceSummary">0 files · 0 chats</p>
       </div>
+
+      <section class="sidebar-section" aria-labelledby="sidebarReviewsTitle">
+        <div class="sidebar-heading">
+          <span class="sidebar-title" id="sidebarReviewsTitle">Reviews</span>
+          <span class="sidebar-note" id="reviewCount">0 reviews</span>
+        </div>
+        <ul id="sidebarReviews" class="sidebar-review-list"></ul>
+      </section>
+
+      <section class="sidebar-section" aria-labelledby="sidebarRecordsTitle">
+        <div class="sidebar-heading">
+          <span class="sidebar-title" id="sidebarRecordsTitle">Records</span>
+          <span class="sidebar-note" id="recordCount">0 records</span>
+        </div>
+        <ul id="sidebarRecords" class="sidebar-record-list"></ul>
+      </section>
 
       <section class="sidebar-section" aria-labelledby="sidebarLibraryTitle">
         <div class="sidebar-heading">
@@ -108,25 +124,31 @@
         <button id="sidebarMenuToggle" class="icon-button mobile-only" type="button" aria-label="Open chat list" title="Open chat list">
           <svg class="icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
         </button>
-        <h1 id="chatTitle">New Chat</h1>
+        <h1 id="chatTitle" class="chat-only">New Chat</h1>
+        <h1 id="workspaceTitle" class="review-only">Architecture review</h1>
       </div>
 
       <div class="topbar-actions">
-        <div id="chatModeSelector" class="mode-selector" role="group" aria-label="Response mode">
+        <div id="viewSwitch" class="mode-selector" role="group" aria-label="Workspace view">
+          <button class="mode-button" type="button" data-view="review" aria-pressed="true">Review</button>
+          <button class="mode-button" type="button" data-view="chat" aria-pressed="false">Chat</button>
+        </div>
+
+        <div id="chatModeSelector" class="mode-selector chat-only" role="group" aria-label="Response mode">
           <button class="mode-button" type="button" data-chat-mode="instant" aria-pressed="true" title="Quick answer">Instant</button>
           <button class="mode-button" type="button" data-chat-mode="deep" aria-pressed="false" title="Technical review">Deep</button>
           <button class="mode-button" type="button" data-chat-mode="creative" aria-pressed="false" title="Rewrite or ideate">Creative</button>
         </div>
 
-        <button id="boardToggle" class="icon-button" type="button" aria-label="Hide output board" title="Toggle output board">
+        <button id="boardToggle" class="icon-button chat-only" type="button" aria-label="Hide output board" title="Toggle output board">
           <svg class="icon" aria-hidden="true"><use href="#icon-bookmark"></use></svg>
         </button>
 
-        <button id="resetChat" class="icon-button" type="button" aria-label="Clear current chat" title="Clear current chat">
+        <button id="resetChat" class="icon-button chat-only" type="button" aria-label="Clear current chat" title="Clear current chat">
           <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
         </button>
 
-        <div class="menu-wrap overflow-only">
+        <div class="menu-wrap overflow-only chat-only">
           <button id="topbarOverflowToggle" class="icon-button" type="button" aria-label="More actions" aria-haspopup="true" aria-expanded="false" title="More actions">
             <svg class="icon" aria-hidden="true"><use href="#icon-more"></use></svg>
           </button>
@@ -160,8 +182,97 @@
       </div>
     </header>
 
-    <div id="workspaceGrid">
-      <section id="chatPanel">
+    <div id="workspaceGrid" tabindex="-1">
+      <section id="reviewPanel" class="review-only" aria-labelledby="reviewPanelTitle">
+        <div class="review-panel-header">
+          <div class="panel-header-copy">
+            <p class="meta-label" id="reviewPanelEyebrow">Architecture Change Review</p>
+            <h2 id="reviewPanelTitle" tabindex="-1">Review a change</h2>
+          </div>
+          <div class="settings-actions" id="reviewPanelActions">
+            <button id="reviewNew" class="secondary-button" type="button" hidden>New review</button>
+            <button id="reviewRerun" class="secondary-button" type="button" hidden>Edit and re-run</button>
+            <button id="reviewExport" class="secondary-button" type="button" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+              Export brief
+            </button>
+          </div>
+        </div>
+
+        <p id="reviewStatus" class="settings-note review-status" role="status" aria-live="polite"></p>
+
+        <div id="reviewStartView" class="review-view">
+          <p class="review-intro">
+            Describe a proposed technical change and pick the library files to check it against. LYTA returns a readiness verdict where every finding is labelled as evidence-backed, inference, recommendation, or insufficient evidence.
+          </p>
+
+          <form id="reviewForm" class="review-form" novalidate>
+            <label class="settings-field">
+              <span>Proposed change</span>
+              <textarea id="reviewChange" rows="4" maxlength="4000" required placeholder="e.g. Move API gateway sessions from the in-process cache to Redis"></textarea>
+            </label>
+
+            <label class="settings-field">
+              <span>Intended outcome</span>
+              <textarea id="reviewOutcome" rows="2" maxlength="1200" required placeholder="What should be true once this ships?"></textarea>
+            </label>
+
+            <label class="settings-field">
+              <span>Constraints (optional)</span>
+              <textarea id="reviewConstraints" rows="2" maxlength="1200" placeholder="Latency budgets, deadlines, compliance rules"></textarea>
+            </label>
+
+            <fieldset class="review-sources">
+              <legend>Evidence sources</legend>
+              <div id="reviewSourceList" class="review-source-list"></div>
+              <button id="reviewAddSources" class="secondary-button" type="button">Add files to the library</button>
+            </fieldset>
+
+            <div class="settings-actions">
+              <button id="reviewSubmit" class="primary-button" type="submit">Run review</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="reviewBriefView" class="review-view" hidden>
+          <div id="reviewBrief" class="review-brief"></div>
+        </div>
+
+        <div id="reviewRecordsView" class="review-view" hidden>
+          <p class="review-intro">
+            Decisions, risks, assumptions, and follow-ups for this workspace. Accept a review finding to save it here with its sources, or record one directly.
+          </p>
+
+
+          <div id="recordFilter" class="mode-selector" role="group" aria-label="Filter records by kind"></div>
+          <div id="recordsList" class="review-brief"></div>
+
+          <form id="recordForm" class="review-form record-form" novalidate>
+            <h3 class="review-section-title">New record</h3>
+            <label class="settings-field">
+              <span>Kind</span>
+              <select id="recordKind"></select>
+            </label>
+            <label class="settings-field">
+              <span>Title</span>
+              <input id="recordTitle" type="text" maxlength="160" required>
+            </label>
+            <label class="settings-field">
+              <span>Details</span>
+              <textarea id="recordContent" rows="3" maxlength="4000" required></textarea>
+            </label>
+            <fieldset class="review-sources">
+              <legend>Supporting sources (optional)</legend>
+              <div id="recordSourceList" class="review-source-list"></div>
+            </fieldset>
+            <div class="settings-actions">
+              <button id="recordSubmit" class="primary-button" type="submit">Save record</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="chatPanel" class="chat-only" aria-label="Chat">
         <section id="conversationSurface" role="log" aria-live="polite" aria-busy="false" aria-label="Conversation">
           <div id="emptyState">
             <h2>Start with a file or a technical question.</h2>
@@ -212,9 +323,9 @@
         </form>
       </section>
 
-      <div id="boardBackdrop" class="overlay" hidden></div>
+      <div id="boardBackdrop" class="overlay chat-only" hidden></div>
 
-      <aside id="artifactPanel" aria-label="Output board">
+      <aside id="artifactPanel" class="chat-only" aria-label="Output board">
         <div class="panel-header">
           <div class="panel-header-copy">
             <p class="meta-label">Board</p>
@@ -241,6 +352,23 @@
 
         <div id="boardBody" hidden></div>
         <div id="boardSources" hidden></div>
+      </aside>
+
+      <div id="evidenceBackdrop" class="overlay review-only" hidden></div>
+
+      <aside id="evidencePanel" class="review-only" aria-labelledby="evidenceTitle">
+        <div class="panel-header">
+          <div class="panel-header-copy">
+            <p class="meta-label">Source evidence</p>
+            <h2 id="evidenceTitle" tabindex="-1">Evidence</h2>
+          </div>
+          <div class="panel-actions">
+            <button id="evidenceClose" class="icon-button mobile-only" type="button" aria-label="Close evidence" title="Close">
+              <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+            </button>
+          </div>
+        </div>
+        <div id="evidenceBody" class="evidence-body"></div>
       </aside>
     </div>
   </main>
@@ -385,86 +513,8 @@
   </div>
 </section>
 
-<div id="reviewOverlay" class="overlay" hidden></div>
-
-<section id="reviewDialog" role="dialog" aria-modal="true" aria-labelledby="reviewTitle" hidden aria-hidden="true">
-  <div class="modal-card review-card">
-    <div class="panel-header">
-      <div>
-        <p class="meta-label">Architecture Change Review</p>
-        <h2 id="reviewTitle" tabindex="-1">Review a change</h2>
-      </div>
-      <button id="closeReview" class="icon-button" type="button" aria-label="Close review">
-        <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
-      </button>
-    </div>
-
-    <div id="reviewFormView">
-      <p class="auth-copy">
-        Describe a proposed technical change and pick the library files to check it against. LYTA returns a readiness verdict where every finding is labelled as evidence-backed, inference, recommendation, or insufficient evidence.
-      </p>
-
-      <form id="reviewForm" class="review-form" novalidate>
-        <label class="settings-field">
-          <span>Proposed change</span>
-          <textarea id="reviewChange" rows="4" maxlength="4000" required placeholder="e.g. Move API gateway sessions from the in-process cache to Redis"></textarea>
-        </label>
-
-        <label class="settings-field">
-          <span>Intended outcome</span>
-          <textarea id="reviewOutcome" rows="2" maxlength="1200" required placeholder="What should be true once this ships?"></textarea>
-        </label>
-
-        <label class="settings-field">
-          <span>Constraints (optional)</span>
-          <textarea id="reviewConstraints" rows="2" maxlength="1200" placeholder="Latency budgets, deadlines, compliance rules"></textarea>
-        </label>
-
-        <fieldset class="review-sources">
-          <legend>Evidence sources</legend>
-          <div id="reviewSourceList" class="review-source-list"></div>
-        </fieldset>
-
-        <div class="settings-actions">
-          <button id="reviewSubmit" class="primary-button" type="submit">Run review</button>
-        </div>
-        <p id="reviewStatus" class="settings-note" role="status" aria-live="polite"></p>
-      </form>
-
-      <div class="settings-actions">
-        <button id="reviewShowRecords" class="secondary-button" type="button">View project records</button>
-      </div>
-
-      <section id="reviewHistory" class="review-history" aria-labelledby="reviewHistoryTitle" hidden>
-        <h3 id="reviewHistoryTitle" class="meta-label">Recent reviews</h3>
-        <ul id="reviewHistoryList" class="review-history-list"></ul>
-      </section>
-    </div>
-
-    <div id="reviewBriefView" hidden>
-      <div class="settings-actions">
-        <button id="reviewBack" class="secondary-button" type="button">New review</button>
-        <button id="reviewExport" class="secondary-button" type="button">
-          <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
-          Export brief
-        </button>
-      </div>
-      <p id="reviewBriefStatus" class="settings-note" role="status" aria-live="polite"></p>
-      <div id="reviewBrief" class="review-brief"></div>
-    </div>
-
-    <div id="reviewRecordsView" hidden>
-      <p class="auth-copy">
-        Findings you accept from a review are saved here as decisions, risks, assumptions, follow-ups, or findings, with the sources that support them.
-      </p>
-      <div class="settings-actions">
-        <button id="recordsBack" class="secondary-button" type="button">Review a change</button>
-      </div>
-      <p id="recordsStatus" class="settings-note" role="status" aria-live="polite"></p>
-      <div id="recordsList" class="review-brief"></div>
-    </div>
-  </div>
-</section>
+<div id="liveAnnouncer" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+<div id="liveAlert" class="visually-hidden" role="alert" aria-live="assertive" aria-atomic="true"></div>
 
 </body>
 </html>

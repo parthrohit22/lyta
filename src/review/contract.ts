@@ -48,6 +48,11 @@ export interface ReviewEvidence {
   snippet: string
   /** Set when the source file is deleted after the review was created; the snippet is then cleared. */
   sourceDeleted?: boolean
+  /** Which retrieval surfaced the passage: "review", or the id of the challenge (e.g. "F2-C1"). */
+  retrievedFor?: string
+  /** 1-based position in that retrieval, and how many passages it returned. */
+  rank?: number
+  retrievalSize?: number
 }
 
 export interface ReviewSource {
@@ -213,7 +218,10 @@ export function toReviewEvidence(citations: LibraryCitation[]): ReviewEvidence[]
     chunkId: citation.id,
     fileId: citation.fileId,
     fileName: citation.fileName,
-    snippet: citation.snippet
+    snippet: citation.snippet,
+    retrievedFor: "review",
+    rank: index + 1,
+    retrievalSize: citations.length
   }))
 }
 
@@ -411,6 +419,7 @@ function parseFinding(candidate: unknown, id: string, resolveRef: (ref: string) 
 export function hydrateReview(review: ArchitectureReview): ArchitectureReview {
   return {
     ...review,
+    evidence: review.evidence.map((item) => ({ ...item, retrievedFor: item.retrievedFor || "review" })),
     assumptions: review.assumptions || [],
     openQuestions: review.openQuestions || [],
     nextActions: review.nextActions || [],
@@ -431,11 +440,19 @@ export function hydrateReview(review: ArchitectureReview): ArchitectureReview {
 export function mergeChallengeEvidence(existing: ReviewEvidence[], citations: LibraryCitation[]) {
   let next = existing.reduce((max, item) => Math.max(max, Number.parseInt(item.ref.slice(1), 10) || 0), 0)
   const added: ReviewEvidence[] = []
-  const evidence = citations.map((citation) => {
+  const evidence = citations.map((citation, index) => {
     const known = existing.find((item) => item.chunkId === citation.id)
     if (known) return known
     next += 1
-    const item = { ref: `E${next}`, chunkId: citation.id, fileId: citation.fileId, fileName: citation.fileName, snippet: citation.snippet }
+    const item: ReviewEvidence = {
+      ref: `E${next}`,
+      chunkId: citation.id,
+      fileId: citation.fileId,
+      fileName: citation.fileName,
+      snippet: citation.snippet,
+      rank: index + 1,
+      retrievalSize: citations.length
+    }
     added.push(item)
     return item
   })
@@ -551,7 +568,11 @@ export function applyChallenge(
   }
   let staleContextRecordId: string | null = null
 
-  review.evidence.push(...meta.addedEvidence.filter((item) => !review.evidence.some((known) => known.chunkId === item.chunkId)))
+  review.evidence.push(
+    ...meta.addedEvidence
+      .filter((item) => !review.evidence.some((known) => known.chunkId === item.chunkId))
+      .map((item) => ({ ...item, retrievedFor: challenge.id }))
+  )
 
   if (conclusionChanged) {
     if (result.revised) {

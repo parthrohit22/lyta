@@ -206,9 +206,35 @@ Why this is useful for the project:
 - fewer moving parts for a small but serious product
 - keeps the architecture emphasis on system design rather than framework ceremony
 
-The Architecture Change Review dialog lives in `pages/app-review.js`, with its
-typed, DOM-free helpers compiled from `pages-src/app-review-core.ts`. It is kept
-out of `app.js` so the review workflow can grow without touching the chat client.
+The review workspace lives in `pages/app-review.js`, with its typed, DOM-free
+helpers compiled from `pages-src/app-review-core.ts`. It is kept out of
+`app.js` so the review workflow can grow without touching the chat client.
+
+The workspace is organised around review output rather than chat (#8):
+
+- **Review is the default view.** `body.view-review` shows the review centre
+  panel (start form, brief, or project records) and the **Source evidence**
+  panel. `body.view-chat` shows chat and the output board. The topbar
+  Review/Chat switch toggles between them, and elements are marked
+  `.review-only` or `.chat-only`.
+- **Selecting a claim drives the evidence panel.** It shows the claim, its
+  evidence state, and each cited passage with file identity and retrieval
+  context. That context comes from `retrievedFor`, `rank` and `retrievalSize`,
+  which the review contract records on every evidence item. The challenge and
+  decision actions sit next to the evidence they act on.
+- **Records are first-class.** The sidebar lists reviews and record counts by
+  kind. The records view creates records directly through
+  `POST /context/records` and reopens a record's source review.
+- **The two scripts coordinate through DOM events, not shared state.**
+  `app.js` emits `lyta:workspace-ready` after bootstrap, so the review script
+  never races the first request into a second guest workspace, and emits
+  `lyta:library-changed` when files change. `LytaCore.announce()` drives the
+  shared live regions.
+- **Below 980px, side panels become bottom sheets** with focus management.
+  Between 981 and 1180px, panels narrow instead of floating over the centre.
+
+See [`docs/design/design-system.md`](docs/design/design-system.md) for tokens,
+components, states, and accessibility rules.
 
 ## Architecture Change Review
 

@@ -30,7 +30,8 @@ const {
   clonePreferences,
   slugify,
   apiJson,
-  extractResponseErrorMessage
+  extractResponseErrorMessage,
+  announce
 } = window.LytaCore
 
 const { prepareAttachment } = window.LytaAttachments
@@ -769,6 +770,9 @@ async function bootstrapWorkspace() {
   renderPendingAttachments()
   renderBoard()
   setComposerStatus(getDefaultStatus())
+  // The guest cookie exists from here on, so app-review.js can load reviews
+  // without racing this request into a second guest workspace.
+  document.dispatchEvent(new CustomEvent("lyta:workspace-ready"))
 
   if (!state.sessions.length) {
     await createNewSession()
@@ -973,6 +977,7 @@ async function sendMessage() {
   state.sending = true
   setSendingState(true)
   setComposerStatus("Sending...", "success")
+  announce("LYTA is responding.")
 
   touchCurrentSession()
 
@@ -1060,6 +1065,7 @@ async function sendMessage() {
     }
 
     setComposerStatus(getDefaultStatus())
+    announce(assistantMessage.citations.length ? `Response complete with ${assistantMessage.citations.length} cited sources.` : "Response complete.")
   } catch (error) {
     const aborted = error?.name === "AbortError"
 
@@ -1090,6 +1096,7 @@ async function sendMessage() {
         getErrorMessage(error, "Unable to send this message."),
         "error"
       )
+      announce("The response failed. Your message is back in the composer.", "assertive")
     }
   } finally {
     state.activeAbortController = null
@@ -1563,6 +1570,8 @@ function syncProfileMenu() {
 }
 
 function renderLibrary() {
+  // The review workspace (app-review.js) lists library files as evidence sources.
+  document.dispatchEvent(new CustomEvent("lyta:library-changed"))
   dom.libraryList.innerHTML = ""
   dom.libraryStats.textContent = `${state.library.length} file${state.library.length === 1 ? "" : "s"}`
   dom.libraryHint.textContent = isGuestUser()

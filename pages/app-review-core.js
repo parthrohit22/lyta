@@ -129,6 +129,14 @@ window.LytaReview = (() => {
             readiness: normalizeReadiness(record.readiness),
             rationale: asText(record.rationale),
             proposedChange: asText(input.proposedChange),
+            intendedOutcome: asText(input.intendedOutcome),
+            constraints: asText(input.constraints),
+            sourceFileIds: asTextList(input.sourceFileIds),
+            policyVersion: asText(record.policyVersion),
+            sources: (Array.isArray(record.sources) ? record.sources : []).map((source) => {
+                const item = asRecord(source);
+                return { fileId: asText(item.fileId), fileName: asText(item.fileName), sourceVersionId: asText(item.sourceVersionId) };
+            }),
             findings: (Array.isArray(record.findings) ? record.findings : [])
                 .map(normalizeFinding)
                 .filter((finding) => Boolean(finding)),
@@ -152,7 +160,10 @@ window.LytaReview = (() => {
                     fileId: asText(item.fileId),
                     fileName: asText(item.fileName) || "Source",
                     snippet: asText(item.snippet),
-                    sourceDeleted: item.sourceDeleted === true
+                    sourceDeleted: item.sourceDeleted === true,
+                    retrievedFor: asText(item.retrievedFor) || "review",
+                    rank: typeof item.rank === "number" ? item.rank : 0,
+                    retrievalSize: typeof item.retrievalSize === "number" ? item.retrievalSize : 0
                 };
             }),
             sourceNames: (Array.isArray(record.sources) ? record.sources : []).map((source) => asText(asRecord(source).fileName)).filter(Boolean),
@@ -178,6 +189,62 @@ window.LytaReview = (() => {
             .map((chunkId) => review.evidence.find((item) => item.chunkId === chunkId))
             .filter((item) => Boolean(item));
     }
+    /** The evidence state shown when a claim is selected; the copy never claims more than the classification allows. */
+    function describeEvidenceState(finding, citedCount) {
+        if (finding.withdrawn) {
+            return { state: "withdrawn", label: "Withdrawn", description: "A challenge found counter-evidence, so this claim no longer stands." };
+        }
+        switch (finding.classification) {
+            case "evidence-backed":
+                return citedCount
+                    ? {
+                        state: "evidence-backed",
+                        label: "Evidence-backed",
+                        description: `Supported by ${citedCount} retrieved passage${citedCount === 1 ? "" : "s"} shown below.`
+                    }
+                    : {
+                        state: "unsupported",
+                        label: "Unsupported",
+                        description: "Marked evidence-backed, but none of its cited passages are available."
+                    };
+            case "recommendation":
+                return {
+                    state: "recommendation",
+                    label: "Recommendation",
+                    description: "A suggested action, not a factual claim about the sources."
+                };
+            case "insufficient evidence":
+                return {
+                    state: "insufficient-evidence",
+                    label: "Insufficient evidence",
+                    description: "The selected sources do not answer this. Add material or challenge it to search again."
+                };
+            default:
+                return { state: "inference", label: "Inference", description: "LYTA's reasoning. No retrieved passage states this directly." };
+        }
+    }
+    /** Where a passage came from: which retrieval, its rank, and the context policy. */
+    function describeRetrieval(review, evidence) {
+        const by = evidence.retrievedFor === "review" ? "Retrieved for this review" : `Retrieved by challenge ${evidence.retrievedFor}`;
+        const rank = evidence.rank ? `, rank ${evidence.rank}${evidence.retrievalSize ? ` of ${evidence.retrievalSize}` : ""}` : "";
+        const policy = review.policyVersion ? ` · policy ${review.policyVersion}${evidence.retrievedFor === "review" ? "" : ".challenge"}` : "";
+        return `${by}${rank}${policy}`;
+    }
+    function buildReviewAnnouncement(review) {
+        const backed = review.findings.filter((finding) => finding.classification === "evidence-backed" && !finding.withdrawn).length;
+        const count = review.findings.length;
+        return `Review ready: ${READINESS_LABELS[review.readiness]}. ${count} finding${count === 1 ? "" : "s"}, ${backed} evidence-backed.${review.missingEvidence.length ? ` ${review.missingEvidence.length} gaps in evidence.` : ""}`;
+    }
+    function buildChallengeAnnouncement(findingId, outcome, conclusionChanged) {
+        const label = CHALLENGE_OUTCOME_LABELS[outcome] || "Recorded";
+        return `${findingId} challenge: ${label}. The conclusion ${conclusionChanged ? "changed" : "did not change"}.`;
+    }
+    function countRecordsByKind(records) {
+        return records.reduce((counts, record) => {
+            counts[record.kind] = (counts[record.kind] || 0) + 1;
+            return counts;
+        }, {});
+    }
     function reviewPath(reviewId, suffix) {
         return `/reviews/${encodeURIComponent(reviewId)}${suffix ? `/${suffix}` : ""}`;
     }
@@ -198,6 +265,11 @@ window.LytaReview = (() => {
         normalizeContextRecords,
         normalizeReviewSummaries,
         getFindingEvidence,
+        describeEvidenceState,
+        describeRetrieval,
+        buildReviewAnnouncement,
+        buildChallengeAnnouncement,
+        countRecordsByKind,
         reviewPath,
         findingPath,
         challengePath
