@@ -39,8 +39,9 @@ If this release adds a new Durable Object SQLite migration tag in
 
 ## 3. AI-evaluation comparison
 
-Before promoting a model or prompt change (`src/config/modelProfiles.ts`,
-`src/chat/messages.ts`'s system prompts):
+Before promoting a model or prompt change (`src/ai/registry.ts`,
+`src/chat/messages.ts`'s system prompts; see
+[`docs/runbooks/provider-change.md`](docs/runbooks/provider-change.md)):
 
 - Run [`eval/dataset.json`](eval/dataset.json)'s cases against the current
   production model and the candidate, following
@@ -49,9 +50,11 @@ Before promoting a model or prompt change (`src/config/modelProfiles.ts`,
   checks pipeline correctness against a scripted fake model, not real
   output quality.
 - Compare citation accuracy, insufficient-evidence compliance, latency, and
-  estimated cost against `MODEL_PROFILES`' documented `targets` in
-  `src/config/modelProfiles.ts` (`recordOperation`'s `estimatedSpendUnits`
-  in `src/utils/telemetry.ts` gives a rough cost proxy).
+  estimated cost against each profile's documented `targets` in
+  `src/ai/registry.ts`'s `PRODUCT_PROFILES` (`recordOperation`'s
+  `estimatedCostUsd` in `src/utils/telemetry.ts` gives a rough cost proxy).
+- Record the result on the model's registry entry (`evaluation`);
+  `tests/unit/model-registry.test.ts` rejects an enabled model without one.
 - Do not describe the candidate as "stronger" unless it meets or exceeds
   the baseline on every dimension above — see `eval/README.md`'s promotion
   policy.
@@ -61,7 +64,28 @@ Before promoting a model or prompt change (`src/config/modelProfiles.ts`,
   broader fixtures once Architecture Change Review and Drift Detection
   ship.
 
-## 4. Manual accessibility smoke test
+## 4. Model gateway configuration
+
+AI Gateway routing is optional (see
+[README.md#model-gateway-cloudflare-ai-gateway](README.md#model-gateway-cloudflare-ai-gateway)).
+When the release changes model routing, or production has a gateway:
+
+- Confirm the deployed Worker vars: `AI_GATEWAY_ID` names a gateway that
+  exists in the account, and `AI_GATEWAY_REQUIRED` is `"true"` so a missing
+  gateway fails closed instead of silently going direct.
+- Confirm the gateway's own settings match LYTA's policy: logging and caching
+  are not relied on (LYTA sends `collectLog: false` and `skipCache: true`
+  per request), and any gateway rate limit is set deliberately.
+- Confirm external-provider keys, if any, are stored in the gateway (BYOK) or
+  as the `AI_EXTERNAL_PROVIDER_KEY` Worker secret, never in `wrangler.jsonc`
+  or the repository. `AI_EXTERNAL_PROVIDERS` stays unset unless an external
+  model has been evaluated and approved.
+- After deploy, tail one request (`npx wrangler tail lyta --format json
+  --search lyta-operation`) and check it shows `"viaGateway":true`.
+- If anything is off, follow
+  [`docs/runbooks/gateway-outage.md`](docs/runbooks/gateway-outage.md).
+
+## 5. Manual accessibility smoke test
 
 Automated checks don't cover interaction or assistive-technology
 behavior. Against a local `wrangler dev` run or the deployed preview:

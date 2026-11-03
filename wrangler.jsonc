@@ -53,6 +53,12 @@
     "remote": true
   },
 
+  // Optional Cloudflare AI Gateway routing (README "Model gateway"). Unset =
+  // direct Workers AI, the local-development path. To route through a gateway,
+  // add a vars block such as:
+  //   "vars": { "AI_GATEWAY_ID": "<gateway-name>", "AI_GATEWAY_REQUIRED": "true" }
+  // Provider keys are Worker secrets (`wrangler secret put`), never vars here.
+
   "assets": {
     "directory": "./pages"
   },

@@ -1,5 +1,5 @@
 import type { Env } from "../index"
-import { runAI, runAIStream } from "../services/ai"
+import { describeModelFailure, runAI, runAIStreamWithMetadata } from "../services/ai"
 import type { AiChatMessage } from "../services/ai"
 import { retrieveContext } from "../services/retriever"
 import { logServerError, scopedPrefix } from "../utils/serverErrors"
@@ -197,7 +197,9 @@ export class Conversation {
 
     try {
       aiResponse = await runAI(this.env, messages, {
-        mode
+        mode,
+        route: "ai.chat",
+        workspaceKey: userId
       })
     } catch (error) {
       logServerError("conversation.chat.ai", error, requestMetadata)
@@ -205,6 +207,7 @@ export class Conversation {
       return Response.json(
         {
           error: CHAT_SERVER_ERROR,
+          degraded: describeModelFailure(error),
           requestId
         },
         {
@@ -239,6 +242,7 @@ export class Conversation {
         citations,
         followups,
         evidenceStatus,
+        model: aiResponse.model,
         requestId
       },
       {
@@ -270,13 +274,17 @@ export class Conversation {
     let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
     const decoder = new TextDecoder()
     let parseBuffer = ""
+    let modelMetadata: Awaited<ReturnType<typeof runAIStreamWithMetadata>>["model"] | undefined
 
     ;(async () => {
       try {
-        const aiStream = await runAIStream(this.env, input.messages, {
-          mode: input.mode
+        const { stream: aiStream, model } = await runAIStreamWithMetadata(this.env, input.messages, {
+          mode: input.mode,
+          route: "ai.chat.stream",
+          workspaceKey: input.userId
         })
 
+        modelMetadata = model
         reader = aiStream.getReader()
 
         while (true) {
@@ -340,7 +348,8 @@ export class Conversation {
             title: input.title,
             citations: input.citations,
             followups,
-            evidenceStatus: input.evidenceStatus
+            evidenceStatus: input.evidenceStatus,
+            ...(modelMetadata ? { model: modelMetadata } : {})
           })
         )
 
@@ -353,6 +362,7 @@ export class Conversation {
           await writer.write(
             encodeSse({
               error: CHAT_SERVER_ERROR,
+              degraded: describeModelFailure(error),
               done: true,
               requestId: input.requestId
             })
@@ -387,7 +397,8 @@ export class Conversation {
 
       try {
         const summaryResult = await runAI(this.env, summaryPrompt, {
-          mode: "instant"
+          mode: "instant",
+          route: "ai.summary"
         })
 
         const newSummary = summaryResult?.response || ""
@@ -425,7 +436,8 @@ export class Conversation {
 
     try {
       const titleResult = await runAI(this.env, titlePrompt, {
-        mode: "instant"
+        mode: "instant",
+        route: "ai.title"
       })
 
       return createConversationTitle(titleResult?.response, message).slice(0, 40) || "New Chat"
@@ -452,7 +464,8 @@ export class Conversation {
 
     try {
       const result = await runAI(this.env, prompt, {
-        mode: mode || "instant"
+        mode: mode || "instant",
+        route: "ai.followups"
       })
 
       return createConversationFollowups(result?.response, userMessage)
