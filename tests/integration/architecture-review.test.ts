@@ -263,7 +263,7 @@ test("happy path: review retrieves only selected sources, validates citations, p
   assert.match(brief, /### F1 · Gateway call sites are unaffected/)
   assert.match(brief, /Classification: \*\*evidence-backed\*\*/)
   assert.match(brief, /Classification: \*\*inference\*\*/)
-  assert.match(brief, /Disposition: accepted — Confirmed with the gateway owner\./)
+  assert.match(brief, /Disposition: accepted \(saved as finding\) — Confirmed with the gateway owner\./)
   assert.match(brief, /Disposition: rejected/)
   assert.match(brief, /\[E1\]\(#evidence-e1\) demo-architecture-change\.md/)
   assert.match(brief, /### E1 · demo-architecture-change\.md/)

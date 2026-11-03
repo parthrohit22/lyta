@@ -40,6 +40,15 @@ interface ReviewEvalCase {
   expectStatus: number
   expectReadiness?: string
   expectCitation: boolean
+  // Optional "challenge this conclusion" step run against the created review;
+  // `reply` is the scripted model JSON for the challenge call.
+  challenge?: {
+    findingId: string
+    reason?: string
+    reply: unknown
+    expectOutcome: string
+    expectConclusionChanged: boolean
+  }
 }
 
 type EvalCase = ChatEvalCase | ReviewEvalCase
@@ -93,8 +102,11 @@ function createFakeNamespace(createInstance: () => { fetch: (request: Request) =
   } as unknown as DurableObjectNamespace
 }
 
-function createEvalEnv(modelReply: string) {
+/** A list of replies is consumed one model call at a time, repeating the last. */
+function createEvalEnv(modelReply: string | string[]) {
   const env = {} as Env
+  const replies = Array.isArray(modelReply) ? modelReply : [modelReply]
+  let modelCallCount = 0
 
   Object.assign(env, {
     AI: {
@@ -105,7 +117,7 @@ function createEvalEnv(modelReply: string) {
         if (input.stream) {
           throw new Error("eval-suite cases only exercise the non-streaming /chat path")
         }
-        return { response: modelReply }
+        return { response: replies[Math.min(modelCallCount++, replies.length - 1)] }
       }
     },
     ARTIFACTS: {
@@ -186,8 +198,8 @@ async function runCase(evalCase: EvalCase) {
 }
 
 async function runReviewCase(evalCase: ReviewEvalCase) {
-  const reply = typeof evalCase.reviewReply === "string" ? evalCase.reviewReply : JSON.stringify(evalCase.reviewReply)
-  const env = createEvalEnv(reply)
+  const toReply = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value))
+  const env = createEvalEnv([toReply(evalCase.reviewReply), ...(evalCase.challenge ? [toReply(evalCase.challenge.reply)] : [])])
   const authedRequest = await registerEvalUser(env, evalCase.id)
   const documents = evalCase.sourceFixture
     ? [
@@ -217,7 +229,7 @@ async function runReviewCase(evalCase: ReviewEvalCase) {
     body: JSON.stringify({ ...evalCase.review, sourceFileIds })
   })
   const body = (await response.json()) as {
-    review?: { readiness: string; evidence: unknown[]; findings: Array<{ classification: string; citationIds: string[] }> }
+    review?: { id: string; readiness: string; evidence: unknown[]; findings: Array<{ classification: string; citationIds: string[] }> }
   }
   const failures: string[] = []
   const citedFindings =
@@ -237,6 +249,27 @@ async function runReviewCase(evalCase: ReviewEvalCase) {
   }
   if (!evalCase.expectCitation && citedFindings.length) {
     failures.push(`expected no evidence-backed citations, got ${citedFindings.length}`)
+  }
+
+  if (evalCase.challenge && body.review) {
+    const challenged = await authedRequest(
+      `https://internal/reviews/${body.review.id}/findings/${evalCase.challenge.findingId}/challenge`,
+      {
+        method: "POST",
+        body: JSON.stringify({ reason: evalCase.challenge.reason || "" })
+      }
+    )
+    const result = (await challenged.json()) as { challenge?: { outcome: string; conclusionChanged: boolean } }
+
+    if (challenged.status !== 200) {
+      failures.push(`challenge: expected 200, got ${challenged.status}`)
+    }
+    if (result.challenge?.outcome !== evalCase.challenge.expectOutcome) {
+      failures.push(`challenge: expected outcome "${evalCase.challenge.expectOutcome}", got "${result.challenge?.outcome}"`)
+    }
+    if (result.challenge?.conclusionChanged !== evalCase.challenge.expectConclusionChanged) {
+      failures.push(`challenge: expected conclusionChanged ${evalCase.challenge.expectConclusionChanged}`)
+    }
   }
 
   return { id: evalCase.id, category: evalCase.category, passed: failures.length === 0, failures }

@@ -9,7 +9,15 @@ import {
   type ContextSelectionManifest,
   type ProjectContextRecord
 } from "../context/projectContext"
-import type { ArchitectureReview, FindingDisposition } from "../review/contract"
+import {
+  applyChallenge,
+  hydrateReview,
+  normalizeRecordKind,
+  type ArchitectureReview,
+  type ChallengeResult,
+  type FindingDisposition,
+  type ReviewEvidence
+} from "../review/contract"
 
 interface WorkspaceProfile {
   name: string
@@ -180,6 +188,10 @@ export class Workspace {
 
     if (path === "/reviews/disposition" && request.method === "POST") {
       return this.queue(() => this.setFindingDisposition(request))
+    }
+
+    if (path === "/reviews/challenge" && request.method === "POST") {
+      return this.queue(() => this.recordChallenge(request))
     }
 
     return new Response("Not Found", { status: 404 })
@@ -724,9 +736,10 @@ export class Workspace {
   }
 
   private async writeContextRecord(
-    body: Omit<Partial<ProjectContextRecord>, "provenance"> & {
+    body: Omit<Partial<ProjectContextRecord>, "provenance" | "origin"> & {
       provenance?: Partial<ContextProvenance>
-    }
+    },
+    origin?: ProjectContextRecord["origin"]
   ) {
     const kind = normalizeContextKind(body.kind)
     const title = normalizeText(body.title, 160)
@@ -758,6 +771,7 @@ export class Workspace {
         chunkIds: uniqueIds(body.provenance?.chunkIds).filter((id) => chunkIds.has(id))
       },
       approval: kind === "summary" ? "user-approved" : "not-required",
+      ...((origin || existing?.origin) && { origin: origin || existing?.origin }),
       retention: "until-user-delete",
       createdAt: existing?.createdAt || now,
       updatedAt: now
@@ -906,6 +920,7 @@ export class Workspace {
       findingId?: string
       disposition?: FindingDisposition
       note?: string
+      recordAs?: string
     }
     const reviews = await this.loadReviews()
     const review = reviews.find((candidate) => candidate.id === normalizeText(body.id, 120))
@@ -915,6 +930,10 @@ export class Workspace {
       return new Response("Finding not found", { status: 404 })
     }
 
+    if (finding.withdrawn && body.disposition === "accepted") {
+      return new Response("This finding was withdrawn after a challenge and cannot be accepted", { status: 409 })
+    }
+
     const now = new Date().toISOString()
     finding.disposition = body.disposition === "accepted" || body.disposition === "rejected" ? body.disposition : "unresolved"
     finding.dispositionNote = normalizeTextBlock(body.note, 500)
@@ -922,28 +941,33 @@ export class Workspace {
 
     if (finding.disposition === "accepted") {
       const cited = review.evidence.filter((item) => finding.citationIds.includes(item.chunkId) && !item.sourceDeleted)
-      const record = await this.writeContextRecord({
-        id: finding.contextRecordId || undefined,
-        kind: "finding",
-        title: finding.title,
-        content: [
-          `Classification: ${finding.classification}`,
-          `Affected area: ${finding.areaType}${finding.area ? ` — ${finding.area}` : ""}`,
-          finding.detail,
-          finding.dispositionNote ? `Reviewer note: ${finding.dispositionNote}` : "",
-          `Accepted from architecture review ${review.id}.`
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        provenance: {
-          sourceFileIds: cited.map((item) => item.fileId),
-          sourceVersionIds: review.sources
-            .filter((source) => cited.some((item) => item.fileId === source.fileId))
-            .map((source) => source.sourceVersionId),
-          chunkIds: cited.map((item) => item.chunkId)
-        }
-      })
+      const recordKind = normalizeRecordKind(body.recordAs)
+      const record = await this.writeContextRecord(
+        {
+          id: finding.contextRecordId || undefined,
+          kind: recordKind,
+          title: finding.title,
+          content: [
+            `Classification: ${finding.classification}`,
+            `Affected area: ${finding.areaType}${finding.area ? ` — ${finding.area}` : ""}`,
+            finding.detail,
+            finding.dispositionNote ? `Reviewer note: ${finding.dispositionNote}` : "",
+            `Accepted from architecture review ${review.id}.`
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          provenance: {
+            sourceFileIds: cited.map((item) => item.fileId),
+            sourceVersionIds: review.sources
+              .filter((source) => cited.some((item) => item.fileId === source.fileId))
+              .map((source) => source.sourceVersionId),
+            chunkIds: cited.map((item) => item.chunkId)
+          }
+        },
+        { reviewId: review.id, findingId: finding.id }
+      )
       finding.contextRecordId = record?.id || null
+      finding.recordKind = record ? recordKind : null
     } else if (finding.contextRecordId) {
       const records = await this.loadContextRecords()
       await this.state.storage.put(
@@ -951,12 +975,64 @@ export class Workspace {
         records.filter((record) => record.id !== finding.contextRecordId)
       )
       finding.contextRecordId = null
+      finding.recordKind = null
     }
 
     review.updatedAt = now
     await this.state.storage.put("architectureReviews", reviews)
 
     return Response.json({ review, finding })
+  }
+
+  /**
+   * Stores a validated challenge. The router ran retrieval and the model
+   * against the review as of `expectedUpdatedAt`; if the review changed in the
+   * meantime the challenge is refused so evidence refs cannot collide.
+   */
+  private async recordChallenge(request: Request) {
+    const body = (await request.json()) as {
+      id?: string
+      findingId?: string
+      expectedUpdatedAt?: string
+      requestId?: string
+      reason?: string
+      result?: ChallengeResult
+      addedEvidence?: ReviewEvidence[]
+    }
+    const reviews = await this.loadReviews()
+    const review = reviews.find((candidate) => candidate.id === normalizeText(body.id, 120))
+    const finding = review?.findings.find((candidate) => candidate.id === normalizeText(body.findingId, 20))
+
+    if (!review || !finding || !body.result) {
+      return new Response("Finding not found", { status: 404 })
+    }
+
+    if (finding.withdrawn) {
+      return new Response("This finding was already withdrawn", { status: 409 })
+    }
+
+    if (review.updatedAt !== body.expectedUpdatedAt) {
+      return new Response("The review changed while the challenge ran. Please retry.", { status: 409 })
+    }
+
+    const { challenge, staleContextRecordId } = applyChallenge(review, finding, body.result, {
+      requestId: normalizeText(body.requestId, 120),
+      reason: normalizeTextBlock(body.reason, 500),
+      addedEvidence: Array.isArray(body.addedEvidence) ? body.addedEvidence : [],
+      now: new Date().toISOString()
+    })
+
+    if (staleContextRecordId) {
+      const records = await this.loadContextRecords()
+      await this.state.storage.put(
+        "projectContextRecords",
+        records.filter((record) => record.id !== staleContextRecordId)
+      )
+    }
+
+    await this.state.storage.put("architectureReviews", reviews)
+
+    return Response.json({ review, finding, challenge })
   }
 
   /**
@@ -994,7 +1070,7 @@ export class Workspace {
   }
 
   private async loadReviews() {
-    return (await this.state.storage.get<ArchitectureReview[]>("architectureReviews")) || []
+    return ((await this.state.storage.get<ArchitectureReview[]>("architectureReviews")) || []).map(hydrateReview)
   }
 
   private async loadContextRecords() {

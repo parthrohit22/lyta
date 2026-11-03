@@ -1,6 +1,8 @@
 export const CONTEXT_SELECTION_POLICY_VERSION = "2026-08-21"
 
-export type ProjectContextKind = "finding" | "decision" | "summary"
+export const PROJECT_CONTEXT_KINDS = ["finding", "decision", "risk", "assumption", "follow-up", "summary"] as const
+
+export type ProjectContextKind = (typeof PROJECT_CONTEXT_KINDS)[number]
 
 export interface ContextProvenance {
   createdBy: "user" | "system"
@@ -18,6 +20,8 @@ export interface ProjectContextRecord {
   provenance: ContextProvenance
   /** Summaries enter the canonical context only after a user creates them. */
   approval: "not-required" | "user-approved"
+  /** Set when the record was promoted from a review finding, so the UI can link back to it. */
+  origin?: { reviewId: string; findingId: string }
   retention: "until-user-delete"
   createdAt: string
   updatedAt: string
@@ -37,7 +41,7 @@ export interface ContextSelectionManifest {
 }
 
 export function normalizeContextKind(value: unknown): ProjectContextKind | null {
-  return value === "finding" || value === "decision" || value === "summary" ? value : null
+  return PROJECT_CONTEXT_KINDS.includes(value as ProjectContextKind) ? (value as ProjectContextKind) : null
 }
 
 export function uniqueIds(values: unknown, max = 40) {

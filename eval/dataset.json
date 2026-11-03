@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-03.1",
+  "version": "2026-11-03.2",
   "baselinePassRate": 1.0,
   "cases": [
     {
@@ -322,6 +322,152 @@
       "reviewReply": "Looks good to me — ship it!",
       "expectStatus": 502,
       "expectCitation": false
+    },
+    {
+      "id": "review-005",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceFixture": "fixtures/demo-architecture-change.md",
+      "review": {
+        "proposedChange": "Replace the API gateway's in-process LRU session cache with a single-AZ ElastiCache Redis instance behind the SessionStore interface.",
+        "intendedOutcome": "Sessions survive gateway restarts and are valid on every gateway instance.",
+        "constraints": "p99 gateway latency must stay within budget."
+      },
+      "reviewReply": {
+        "readiness": "ready",
+        "rationale": "Call sites stay behind SessionStore and the proposal names its latency, availability, and migration risks with mitigations.",
+        "findings": [
+          {
+            "title": "SessionStore interface keeps call sites unchanged",
+            "classification": "evidence-backed",
+            "areaType": "interface",
+            "area": "api-gateway SessionStore",
+            "citations": [
+              "E1"
+            ]
+          },
+          {
+            "title": "Single-AZ Redis concentrates the session failure domain",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "session reads/writes",
+            "citations": [
+              "E2"
+            ]
+          },
+          {
+            "title": "Schedule multi-AZ failover before traffic growth",
+            "classification": "recommendation",
+            "areaType": "operations",
+            "area": "ElastiCache",
+            "citations": []
+          }
+        ],
+        "requiredTests": [
+          "Load test p99 gateway latency with Redis-backed sessions."
+        ],
+        "observability": [
+          "Redis latency and cache hit/miss metrics."
+        ],
+        "rollback": [
+          "Revert SessionStore to LocalSessionCache."
+        ],
+        "missingEvidence": []
+      },
+      "expectStatus": 201,
+      "expectReadiness": "ready",
+      "expectCitation": true,
+      "challenge": {
+        "findingId": "F2",
+        "reason": "Is single-AZ really acceptable at launch?",
+        "reply": {
+          "outcome": "revised",
+          "rationale": "The proposal itself calls a zone outage strictly worse than today's per-instance blast radius.",
+          "counterEvidence": [
+            "E4"
+          ],
+          "revisedFinding": {
+            "title": "Single-AZ Redis is a launch risk, not a fast follow",
+            "detail": "A zone outage drops every session at once.",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "session reads/writes",
+            "citations": [
+              "E4"
+            ]
+          }
+        },
+        "expectOutcome": "revised",
+        "expectConclusionChanged": true
+      }
+    },
+    {
+      "id": "review-006",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceFixture": "fixtures/demo-architecture-change.md",
+      "review": {
+        "proposedChange": "Replace the API gateway's in-process LRU session cache with a single-AZ ElastiCache Redis instance behind the SessionStore interface.",
+        "intendedOutcome": "Sessions survive gateway restarts and are valid on every gateway instance.",
+        "constraints": "p99 gateway latency must stay within budget."
+      },
+      "reviewReply": {
+        "readiness": "ready",
+        "rationale": "Call sites stay behind SessionStore and the proposal names its latency, availability, and migration risks with mitigations.",
+        "findings": [
+          {
+            "title": "SessionStore interface keeps call sites unchanged",
+            "classification": "evidence-backed",
+            "areaType": "interface",
+            "area": "api-gateway SessionStore",
+            "citations": [
+              "E1"
+            ]
+          },
+          {
+            "title": "Single-AZ Redis concentrates the session failure domain",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "session reads/writes",
+            "citations": [
+              "E2"
+            ]
+          },
+          {
+            "title": "Schedule multi-AZ failover before traffic growth",
+            "classification": "recommendation",
+            "areaType": "operations",
+            "area": "ElastiCache",
+            "citations": []
+          }
+        ],
+        "requiredTests": [
+          "Load test p99 gateway latency with Redis-backed sessions."
+        ],
+        "observability": [
+          "Redis latency and cache hit/miss metrics."
+        ],
+        "rollback": [
+          "Revert SessionStore to LocalSessionCache."
+        ],
+        "missingEvidence": []
+      },
+      "expectStatus": 201,
+      "expectReadiness": "ready",
+      "expectCitation": true,
+      "challenge": {
+        "findingId": "F1",
+        "reason": "Do call sites really stay unchanged?",
+        "reply": {
+          "outcome": "withdrawn",
+          "rationale": "An unretrieved migration guide says call sites change.",
+          "counterEvidence": [
+            "E99"
+          ]
+        },
+        "expectOutcome": "insufficient evidence",
+        "expectConclusionChanged": false
+      }
     }
   ]
 }

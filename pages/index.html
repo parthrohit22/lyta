@@ -62,6 +62,11 @@
       <span class="sidebar-label">Review a change</span>
     </button>
 
+    <button id="openRecords" class="secondary-button full-width" type="button" aria-label="Project records" aria-haspopup="dialog">
+      <svg class="icon" aria-hidden="true"><use href="#icon-bookmark"></use></svg>
+      <span class="sidebar-label">Project records</span>
+    </button>
+
     <div class="sidebar-scroll">
       <div class="workspace-card">
         <div class="workspace-card-row">
@@ -426,6 +431,10 @@
         <p id="reviewStatus" class="settings-note" role="status" aria-live="polite"></p>
       </form>
 
+      <div class="settings-actions">
+        <button id="reviewShowRecords" class="secondary-button" type="button">View project records</button>
+      </div>
+
       <section id="reviewHistory" class="review-history" aria-labelledby="reviewHistoryTitle" hidden>
         <h3 id="reviewHistoryTitle" class="meta-label">Recent reviews</h3>
         <ul id="reviewHistoryList" class="review-history-list"></ul>
@@ -442,6 +451,17 @@
       </div>
       <p id="reviewBriefStatus" class="settings-note" role="status" aria-live="polite"></p>
       <div id="reviewBrief" class="review-brief"></div>
+    </div>
+
+    <div id="reviewRecordsView" hidden>
+      <p class="auth-copy">
+        Findings you accept from a review are saved here as decisions, risks, assumptions, follow-ups, or findings, with the sources that support them.
+      </p>
+      <div class="settings-actions">
+        <button id="recordsBack" class="secondary-button" type="button">Review a change</button>
+      </div>
+      <p id="recordsStatus" class="settings-note" role="status" aria-live="polite"></p>
+      <div id="recordsList" class="review-brief"></div>
     </div>
   </div>
 </section>

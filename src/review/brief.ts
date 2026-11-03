@@ -1,4 +1,4 @@
-import type { ArchitectureReview, ReviewEvidence, ReviewFinding } from "./contract"
+import type { ArchitectureReview, FindingChallenge, FindingSnapshot, ReviewEvidence, ReviewFinding } from "./contract"
 
 /**
  * Renders a review as a portable Markdown brief. The brief keeps every
@@ -56,6 +56,9 @@ export function renderReviewBrief(review: ArchitectureReview) {
   lines.push(...renderList("Observability", review.observability, "No observability evidence was identified."))
   lines.push(...renderList("Rollback", review.rollback, "No rollback evidence was identified; treat rollback as unproven."))
   lines.push(...renderList("Missing evidence", review.missingEvidence, "None recorded."))
+  lines.push(...renderList("Assumptions", review.assumptions, "None recorded."))
+  lines.push(...renderList("Open questions", review.openQuestions, "None recorded."))
+  lines.push(...renderList("Next actions", review.nextActions, "None recorded."))
 
   if (review.adjustments.length) {
     lines.push(...renderList("Server-side corrections", review.adjustments, ""))
@@ -76,11 +79,13 @@ export function renderReviewBrief(review: ArchitectureReview) {
 
 function renderFinding(finding: ReviewFinding, evidenceById: Map<string, ReviewEvidence>) {
   const lines = [
-    `### ${finding.id} · ${finding.title}`,
+    `### ${finding.id} · ${finding.withdrawn ? `~~${finding.title}~~ (withdrawn after challenge)` : finding.title}`,
     "",
     `- Classification: **${finding.classification}**`,
     `- Affected area: ${finding.areaType}${finding.area ? ` — ${finding.area}` : ""}`,
-    `- Disposition: ${finding.disposition}${finding.dispositionNote ? ` — ${finding.dispositionNote}` : ""}`,
+    `- Disposition: ${finding.disposition}${finding.recordKind ? ` (saved as ${finding.recordKind})` : ""}${
+      finding.dispositionNote ? ` — ${finding.dispositionNote}` : ""
+    }`,
     `- Evidence: ${finding.citationIds.length ? formatCitations(finding.citationIds, evidenceById) : "none cited"}`
   ]
 
@@ -92,7 +97,41 @@ function renderFinding(finding: ReviewFinding, evidenceById: Map<string, ReviewE
     lines.push("", finding.detail)
   }
 
+  if (finding.challenges.length) {
+    lines.push("", "**Challenge history**", "")
+    for (const challenge of finding.challenges) {
+      lines.push(...renderChallenge(challenge, evidenceById))
+    }
+  }
+
   return lines
+}
+
+function renderChallenge(challenge: FindingChallenge, evidenceById: Map<string, ReviewEvidence>) {
+  const lines = [
+    `- ${challenge.id} · ${challenge.createdAt} · outcome **${challenge.outcome}** · conclusion ${
+      challenge.conclusionChanged ? "**changed**" : "unchanged"
+    }`
+  ]
+
+  if (challenge.reason) lines.push(`  - Challenge: ${challenge.reason}`)
+  lines.push(`  - Rationale: ${challenge.rationale}`)
+  lines.push(
+    `  - Counter-evidence: ${challenge.counterEvidenceIds.length ? formatCitations(challenge.counterEvidenceIds, evidenceById) : "none"}`
+  )
+  if (challenge.conclusionChanged) {
+    lines.push(`  - Before: ${describeSnapshot(challenge.before)}`)
+    lines.push(`  - After: ${challenge.after ? describeSnapshot(challenge.after) : "withdrawn"}`)
+  }
+  for (const adjustment of challenge.adjustments) {
+    lines.push(`  - Correction: ${adjustment}`)
+  }
+
+  return lines
+}
+
+function describeSnapshot(snapshot: FindingSnapshot) {
+  return `${snapshot.title} [${snapshot.classification}]`
 }
 
 function renderEvidence(item: ReviewEvidence) {
