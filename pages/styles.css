@@ -69,6 +69,7 @@
   --sidebar-rail-width:56px;
   --topbar-height:56px;
   --board-width:360px;
+  --evidence-width:380px;
 }
 
 :root,
@@ -79,7 +80,7 @@
   --surface-subtle:#f0f1f3;
   --surface-raised:#ffffff;
   --border:#e5e7eb;
-  --border-strong:#8b909c;
+  --border-strong:#848995;
   --text:#111827;
   --text-muted:#5b6169;
   --text-subtle:#686d7a;
@@ -582,7 +583,7 @@ body.board-closed #artifactPanel{
   gap:var(--space-2);
   min-height:32px;
   padding:0 var(--space-2);
-  border:1px solid var(--border);
+  border:1px solid var(--border-strong);
   border-radius:var(--radius-sm);
   background:var(--surface);
   color:var(--text-subtle);
@@ -766,7 +767,8 @@ body.sidebar-rail #openRecords{
   min-width:0;
 }
 
-#chatTitle{
+#chatTitle,
+#workspaceTitle{
   margin:0;
   overflow:hidden;
   text-overflow:ellipsis;
@@ -1367,7 +1369,7 @@ body.sidebar-rail #openRecords{
   flex-direction:column;
   gap:var(--space-2);
   padding:var(--space-3);
-  border:1px solid var(--border);
+  border:1px solid var(--border-strong);
   border-radius:var(--radius-lg);
   background:var(--surface-raised);
   box-shadow:var(--shadow-md);
@@ -1693,7 +1695,7 @@ body.settings-open #settingsPanel{
 .settings-field input{
   min-height:38px;
   padding:0 var(--space-3);
-  border:1px solid var(--border);
+  border:1px solid var(--border-strong);
   border-radius:var(--radius-sm);
   background:var(--surface);
   outline:none;
@@ -1794,8 +1796,7 @@ body.settings-open #settingsPanel{
    ========================================================================== */
 
 #authModal,
-#shortcutsSheet,
-#reviewDialog{
+#shortcutsSheet{
   position:fixed;
   inset:0;
   z-index:80;
@@ -1918,27 +1919,12 @@ body.settings-open #settingsPanel{
    RESPONSIVE
    ========================================================================== */
 
+/* Between the mobile breakpoint and wide desktop the side panels narrow
+   instead of floating over the centre panel (they used to cover chat here). */
 @media (max-width:1180px){
-  #workspaceGrid{
-    grid-template-columns:minmax(0,1fr);
-  }
-
-  #artifactPanel{
-    position:fixed;
-    top:0;
-    right:0;
-    bottom:0;
-    z-index:55;
-    width:min(420px,100vw);
-    border-left:1px solid var(--border);
-    box-shadow:var(--shadow-lg);
-    transform:translateX(0);
-    transition:transform var(--duration-panel) var(--ease-standard);
-  }
-
-  body.board-closed #artifactPanel{
-    display:flex;
-    transform:translateX(100%);
+  :root{
+    --board-width:300px;
+    --evidence-width:320px;
   }
 }
 
@@ -2013,20 +1999,44 @@ body.settings-open #settingsPanel{
     display:none;
   }
 
-  #artifactPanel{
+  #workspaceGrid{
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  /* Side panels become bottom sheets. Closed sheets are visibility:hidden so
+     they leave the tab order and the accessibility tree, not just the screen. */
+  #artifactPanel,
+  body.board-closed #artifactPanel,
+  #evidencePanel{
+    position:fixed;
     top:auto;
     left:0;
     right:0;
+    bottom:0;
+    z-index:56;
+    display:flex;
     width:auto;
     max-height:82vh;
+    overflow-y:auto;
     border-left:0;
     border-top:1px solid var(--border);
     border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+    background:var(--bg);
+    box-shadow:var(--shadow-lg);
     transform:translateY(100%);
+    visibility:hidden;
+    transition:transform var(--duration-panel) var(--ease-standard),visibility 0s linear var(--duration-panel);
   }
 
-  body.board-sheet-open #artifactPanel{
+  body.board-sheet-open #artifactPanel,
+  body.evidence-sheet-open #evidencePanel{
     transform:translateY(0);
+    visibility:visible;
+    transition-delay:0s;
+  }
+
+  #evidenceClose{
+    display:inline-flex;
   }
 
   #boardClose{
@@ -2040,8 +2050,10 @@ body.settings-open #settingsPanel{
 
 @media (min-width:981px){
   #boardClose,
+  #evidenceClose,
   #sidebarBackdrop,
-  #boardBackdrop{
+  #boardBackdrop,
+  #evidenceBackdrop{
     display:none;
   }
 }
@@ -2050,6 +2062,7 @@ body.settings-open #settingsPanel{
   #topbar{
     padding:0 var(--space-4);
   }
+
 
   #conversationSurface{
     padding:var(--space-6) var(--space-4);
@@ -2064,7 +2077,8 @@ body.settings-open #settingsPanel{
     padding:var(--space-4);
   }
 
-  #chatTitle{
+  #chatTitle,
+  #workspaceTitle{
     font-size:var(--text-md);
   }
 
@@ -2094,17 +2108,13 @@ body.settings-open #settingsPanel{
    ARCHITECTURE CHANGE REVIEW
    ========================================================================== */
 
-.review-card{
-  width:min(760px,100%);
-}
-
-#reviewTitle:focus{
+#reviewPanelTitle:focus,
+#evidenceTitle:focus,
+#workspaceGrid:focus{
   outline:none;
 }
 
-#reviewFormView,
-#reviewBriefView,
-#reviewRecordsView,
+.review-view,
 .review-form,
 .review-brief{
   display:flex;
@@ -2115,7 +2125,7 @@ body.settings-open #settingsPanel{
 .settings-field textarea{
   min-height:64px;
   padding:var(--space-2) var(--space-3);
-  border:1px solid var(--border);
+  border:1px solid var(--border-strong);
   border-radius:var(--radius-sm);
   background:var(--surface);
   line-height:1.5;
@@ -2162,8 +2172,6 @@ body.settings-open #settingsPanel{
   accent-color:var(--accent);
 }
 
-.review-history,
-.review-history-list,
 .review-list,
 .review-findings{
   display:flex;
@@ -2172,41 +2180,19 @@ body.settings-open #settingsPanel{
   margin:0;
   padding:0;
 }
-
-.review-history-list,
 .review-findings{
   list-style:none;
 }
-
 .review-list{
   padding-left:var(--space-5);
   font-size:var(--text-sm);
   line-height:1.5;
 }
 
-.review-history-item{
-  display:flex;
-  flex-direction:column;
-  align-items:flex-start;
-  gap:2px;
-  width:100%;
-  padding:var(--space-2) var(--space-3);
-  border:1px solid var(--border);
-  border-radius:var(--radius-sm);
-  text-align:left;
-  font-size:var(--text-sm);
-}
-
-.review-history-item:hover{
-  background:var(--surface-subtle);
-}
-
-.review-history-meta,
 .review-finding-area{
   color:var(--text-muted);
   font-size:var(--text-xs);
 }
-
 .review-section-title{
   margin:0 0 var(--space-2);
   font-size:var(--text-sm);
@@ -2241,25 +2227,6 @@ body.settings-open #settingsPanel{
   line-height:1.5;
 }
 
-.review-finding{
-  display:flex;
-  flex-direction:column;
-  gap:var(--space-2);
-  padding:var(--space-3);
-  border:1px solid var(--border);
-  border-radius:var(--radius-sm);
-}
-
-.review-finding-toggle{
-  display:flex;
-  flex-wrap:wrap;
-  align-items:center;
-  gap:var(--space-1) var(--space-2);
-  width:100%;
-  text-align:left;
-  border-radius:var(--radius-sm);
-}
-
 .review-finding-title{
   flex:1 1 60%;
   font-size:var(--text-sm);
@@ -2278,16 +2245,6 @@ body.settings-open #settingsPanel{
   font-weight:var(--weight-medium);
 }
 
-.review-finding[data-classification="evidence-backed"] .review-chip{
-  border-color:var(--success);
-  color:var(--success);
-}
-
-.review-finding[data-classification="insufficient evidence"] .review-chip{
-  border-color:var(--warning);
-  color:var(--warning);
-}
-
 .review-finding-panel{
   display:flex;
   flex-direction:column;
@@ -2298,25 +2255,6 @@ body.settings-open #settingsPanel{
 
 .review-finding-panel p{
   margin:0;
-}
-
-.review-excerpt{
-  margin:0;
-  padding:var(--space-2) var(--space-3);
-  border-left:3px solid var(--accent);
-  background:var(--surface-subtle);
-  border-radius:var(--radius-sm);
-}
-
-.review-excerpt blockquote{
-  margin:0;
-  white-space:pre-wrap;
-}
-
-.review-excerpt figcaption{
-  margin-top:var(--space-1);
-  color:var(--text-muted);
-  font-size:var(--text-xs);
 }
 
 .review-disposition{
@@ -2363,11 +2301,6 @@ body.settings-open #settingsPanel{
   margin:0;
 }
 
-.review-finding[data-withdrawn="true"] .review-finding-title{
-  text-decoration:line-through;
-  color:var(--text-muted);
-}
-
 .review-record-kind{
   display:flex;
   align-items:center;
@@ -2412,4 +2345,340 @@ body.settings-open #settingsPanel{
   align-self:flex-start;
   min-height:30px;
   font-size:var(--text-xs);
+}
+
+/* ==========================================================================
+   REVIEW WORKSPACE LAYOUT
+   Review is the default centre view; chat and the board are one switch away.
+   ========================================================================== */
+
+body.view-review .chat-only,
+body.view-chat .review-only{
+  display:none !important;
+}
+
+body.view-review #workspaceGrid,
+body.view-review.board-closed #workspaceGrid{
+  grid-template-columns:minmax(0,1fr) var(--evidence-width);
+}
+
+#reviewPanel{
+  min-width:0;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-4);
+  padding:var(--space-6) var(--space-7);
+  border-right:1px solid var(--border);
+  overflow-y:auto;
+}
+
+.review-panel-header{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:var(--space-3);
+  padding-bottom:var(--space-3);
+  border-bottom:1px solid var(--border);
+}
+
+.review-panel-header h2{
+  margin:2px 0 0;
+  font-size:var(--text-lg);
+}
+
+.review-status:empty{
+  display:none;
+}
+
+.review-intro{
+  margin:0;
+  max-width:68ch;
+  color:var(--text-muted);
+  font-size:var(--text-sm);
+  line-height:1.6;
+}
+
+.review-form{
+  max-width:720px;
+}
+
+.record-form{
+  padding:var(--space-4);
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+}
+
+.settings-field select,
+.settings-field input[type="text"]{
+  min-height:38px;
+  padding:0 var(--space-3);
+  border:1px solid var(--border-strong);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  color:var(--text);
+  font:inherit;
+}
+
+#evidencePanel{
+  min-width:0;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-4);
+  padding:var(--space-5);
+  background:var(--bg);
+  overflow-y:auto;
+}
+
+.evidence-body{
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-4);
+  font-size:var(--text-sm);
+  line-height:1.5;
+}
+
+.evidence-body h3{
+  margin:0;
+  font-size:var(--text-md);
+  font-weight:var(--weight-semibold);
+}
+
+.evidence-body p{
+  margin:0;
+}
+
+/* sidebar review + record lists */
+
+.sidebar-review-list,
+.sidebar-record-list{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+  margin:0;
+  padding:0;
+  list-style:none;
+}
+
+.sidebar-list-button{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--space-2);
+  width:100%;
+  min-height:32px;
+  padding:var(--space-1) var(--space-2);
+  border-radius:var(--radius-sm);
+  text-align:left;
+  font-size:var(--text-sm);
+}
+
+.sidebar-list-button:hover,
+.sidebar-list-button[aria-current="true"]{
+  background:var(--surface-subtle);
+}
+
+.sidebar-list-button span:first-child{
+  min-width:0;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.sidebar-list-meta{
+  flex-shrink:0;
+  color:var(--text-muted);
+  font-size:var(--text-xs);
+}
+
+.sidebar-empty{
+  margin:0;
+  padding:var(--space-1) var(--space-2);
+  color:var(--text-subtle);
+  font-size:var(--text-xs);
+}
+
+/* findings as selectable claims */
+
+.review-finding-select{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:var(--space-1) var(--space-2);
+  width:100%;
+  padding:var(--space-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  text-align:left;
+  background:var(--surface);
+}
+
+.review-finding-select:hover{
+  border-color:var(--border-strong);
+}
+
+.review-finding-select[aria-pressed="true"]{
+  border-color:var(--accent);
+  box-shadow:inset 3px 0 0 var(--accent);
+}
+
+.review-finding-select[data-withdrawn="true"] .review-finding-title{
+  text-decoration:line-through;
+  color:var(--text-muted);
+}
+
+.review-finding-select[data-classification="evidence-backed"] .review-chip{
+  border-color:var(--success);
+  color:var(--success);
+}
+
+.review-finding-select[data-classification="insufficient evidence"] .review-chip{
+  border-color:var(--warning);
+  color:var(--warning);
+}
+
+/* callouts: insufficient evidence, blocked, failure */
+
+.review-callout{
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-2);
+  padding:var(--space-3) var(--space-4);
+  border:1px solid var(--border);
+  border-left:4px solid var(--warning);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+  font-size:var(--text-sm);
+  line-height:1.5;
+}
+
+.review-callout[data-tone="danger"]{
+  border-left-color:var(--danger);
+  background:var(--danger-subtle);
+}
+
+.review-callout h3,
+.review-callout p{
+  margin:0;
+}
+
+.review-callout h3{
+  font-size:var(--text-sm);
+  font-weight:var(--weight-semibold);
+}
+
+.review-loading{
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-3);
+  padding:var(--space-4);
+  border:1px dashed var(--border-strong);
+  border-radius:var(--radius-sm);
+}
+
+/* evidence inspector */
+
+.evidence-state{
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-1);
+  padding:var(--space-3);
+  border:1px solid var(--border);
+  border-left:4px solid var(--border-strong);
+  border-radius:var(--radius-sm);
+}
+
+.evidence-state[data-state="evidence-backed"]{
+  border-left-color:var(--success);
+}
+
+.evidence-state[data-state="insufficient-evidence"],
+.evidence-state[data-state="unsupported"]{
+  border-left-color:var(--warning);
+}
+
+.evidence-state[data-state="withdrawn"]{
+  border-left-color:var(--danger);
+}
+
+.evidence-state strong{
+  font-size:var(--text-sm);
+}
+
+.evidence-card{
+  display:flex;
+  flex-direction:column;
+  gap:var(--space-2);
+  margin:0;
+  padding:var(--space-3);
+  border:1px solid var(--border);
+  border-radius:var(--radius-sm);
+  background:var(--surface);
+}
+
+.evidence-card h4{
+  margin:0;
+  font-size:var(--text-sm);
+  font-weight:var(--weight-semibold);
+}
+
+.evidence-meta{
+  display:grid;
+  grid-template-columns:max-content minmax(0,1fr);
+  gap:2px var(--space-3);
+  margin:0;
+  font-size:var(--text-xs);
+}
+
+.evidence-meta dt{
+  color:var(--text-muted);
+}
+
+.evidence-meta dd{
+  margin:0;
+  overflow-wrap:anywhere;
+}
+
+.evidence-meta code{
+  font-family:var(--font-mono);
+}
+
+.evidence-excerpt{
+  margin:0;
+  padding:var(--space-2) var(--space-3);
+  border-left:3px solid var(--accent);
+  border-radius:var(--radius-sm);
+  background:var(--surface-subtle);
+  white-space:pre-wrap;
+}
+
+.record-actions{
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--space-2);
+}
+
+/* Review layout overrides for narrow screens. These must follow the base
+   review rules above, so they live at the end of the file. */
+@media (max-width:980px){
+  body.view-review #workspaceGrid,
+  body.view-review.board-closed #workspaceGrid{
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  #reviewPanel{
+    border-right:0;
+  }
+}
+
+@media (max-width:720px){
+  #reviewPanel{
+    padding:var(--space-5) var(--space-4);
+  }
+
+  .evidence-meta{
+    grid-template-columns:minmax(0,1fr);
+  }
 }

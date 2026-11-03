@@ -335,6 +335,21 @@ window.LytaCore = (() => {
         }
         return toSingleLine(trimmed, 240) || fallback;
     }
+    /**
+     * Screen-reader-only announcement through the page's #liveAnnouncer /
+     * #liveAlert regions. Clearing first makes repeated identical messages
+     * ("Response complete.") announce again.
+     */
+    function announce(message, politeness = "polite") {
+        const region = document.getElementById(politeness === "assertive" ? "liveAlert" : "liveAnnouncer");
+        if (!region) {
+            return;
+        }
+        region.textContent = "";
+        window.setTimeout(() => {
+            region.textContent = message;
+        }, 50);
+    }
     async function apiJson(path, options = {}) {
         const headers = new Headers(options.headers || undefined);
         if (options.body && !headers.has("Content-Type")) {
@@ -381,6 +396,7 @@ window.LytaCore = (() => {
         clonePreferences,
         slugify,
         apiJson,
-        extractResponseErrorMessage
+        extractResponseErrorMessage,
+        announce
     };
 })();
