@@ -7,12 +7,12 @@
 ![Status](https://img.shields.io/badge/Status-Live-027a48)
 
 <p align="center">
-  <img src="./assets/demo.png" alt="LYTA workspace preview" width="900"/>
+  <img src="./assets/demo.png" alt="LYTA review workspace: a review brief with a needs-evidence verdict and classified findings in the centre, the selected claim's source passage with file id, version, passage id, and retrieval rank on the right, and reviews, records, and library files in the sidebar" width="900"/>
 </p>
 
 <p align="center">
   <b>Edge-native AI workspace for technical work.</b><br/>
-  Persistent workspaces · Reusable file memory · Retrieval with citations · Streaming chat · Output board
+  Architecture change review · Source evidence for every claim · Decision records · Reusable file memory · Streaming chat
 </p>
 
 <p align="center">
@@ -28,6 +28,7 @@ The current product experience is intentionally minimal. The interface focuses o
 
 ## What LYTA Does
 
+- **Review workspace**: the review brief is the centre panel, the selected claim's exact source passage (file, version, passage id, retrieval rank and policy, evidence state) sits beside it, and reviews, decision/risk/assumption/follow-up records, and files live in the sidebar. Chat is one switch away. Built on a documented design system ([`docs/design/design-system.md`](docs/design/design-system.md)) with automated contrast, label, focus, and live-region checks.
 - **Architecture Change Review**: paste a proposed technical change, pick the library files to check it against, and get a structured review brief instead of a chat reply — a `ready` / `needs evidence` / `blocked` verdict with rationale, findings classified as evidence-backed, inference, recommendation, or insufficient evidence, source excerpts for every citation, per-finding accept/reject/unresolved dispositions, and a Markdown export.
 - Starts immediately in guest mode with temporary server-backed workspace state.
 - Supports account workspaces for persisted chats, files, profile data, and preferences.
@@ -158,11 +159,15 @@ More detail lives in [ARCHITECTURE.md](./ARCHITECTURE.md).
 assets/
   architecture.svg         Source for the README architecture visual
   architecture.png         Rendered README architecture visual
-  demo.svg                 Source for the README product preview
-  demo.png                 Rendered README product preview
+  demo.png                 README hero: a real screenshot of the review workspace (see below)
 
 scripts/
   render_asset.swift       Renders SVG assets to PNG on macOS
+  demo-preview.ts          Local UI preview on scripted fakes (no Cloudflare account needed)
+
+docs/
+  design/design-system.md  Tokens, components, states, breakpoints, accessibility rules
+  demo/review-walkthrough.md  Demo and usability script for the review flow
 
 pages/
   index.html               Main UI shell
@@ -171,7 +176,7 @@ pages/
   app-attachments.js       Browser-side attachment preparation
   app.js                   Client logic for auth, chat, uploads, board, settings
   app-review-core.js       Generated review helper bundle
-  app-review.js            Architecture Change Review dialog
+  app-review.js            Review workspace: brief, evidence inspector, records, view switch
 
 pages-src/
   app-core.ts              TypeScript source for app-core.js
@@ -242,10 +247,30 @@ Open:
 http://localhost:8787
 ```
 
-### Render README Assets
+### Preview the UI Without Cloudflare
+
+`scripts/demo-preview.ts` serves `pages/` and runs the real router and
+Durable Objects against in-memory storage and a scripted model. `SEED=1`
+pre-builds a demo workspace (the fixture, a runbook, an ADR, a review, a
+challenge, and records). Nothing persists, and every model reply is canned.
 
 ```bash
-swift scripts/render_asset.swift assets/demo.svg assets/demo.png 1600 960
+npm run build:client
+SEED=1 npx tsx scripts/demo-preview.ts
+```
+
+Open `http://localhost:8799`.
+
+### Render README Assets
+
+The hero image is a real screenshot of the seeded preview, captured with
+headless Chrome in dark mode while the preview above is running:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars --force-dark-mode --window-size=1600,960 --force-device-scale-factor=2 --virtual-time-budget=8000 --screenshot="$PWD/assets/demo.png" http://localhost:8799/
+```
+
+```bash
 swift scripts/render_asset.swift assets/architecture.svg assets/architecture.png 1600 900
 ```
 
@@ -291,6 +316,7 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 | Full request pipeline | `tests/smoke/smoke.test.ts` |
 | Architecture Change Review (happy, missing-evidence, conflicting, inaccessible-source paths) | `tests/integration/architecture-review.test.ts`, `tests/unit/review-contract.test.ts` |
 | Review challenges and project records (changed, unchanged, insufficient counter-evidence) | `tests/integration/review-challenge.test.ts`, `tests/unit/review-contract.test.ts` |
+| Frontend accessibility (labels, names, id references, landmarks, live regions, focus, reduced motion, WCAG contrast for both themes, announcement and evidence-state text, no raw HTML in review UI) | `tests/unit/frontend-accessibility.test.ts` |
 
 ## Model Configuration and Evaluation
 
