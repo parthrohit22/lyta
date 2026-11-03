@@ -14,6 +14,20 @@ import { createEmbedding } from "./services/embeddings"
 import { logServerError, scopedPrefix } from "./utils/serverErrors"
 import { applyBrowserSecurityHeaders } from "./utils/browserSecurity"
 import { recordOperation } from "./utils/telemetry"
+import { callWithPolicy } from "./services/ai"
+import { getModelProfile } from "./config/modelProfiles"
+import {
+  REVIEW_CONTEXT_POLICY_VERSION,
+  normalizeDisposition,
+  normalizeDispositionNote,
+  parseReviewOutput,
+  toReviewEvidence,
+  validateReviewInput,
+  type ArchitectureReview,
+  type ReviewSource
+} from "./review/contract"
+import { buildReviewMessages, buildReviewQuery } from "./review/prompt"
+import { renderReviewBrief } from "./review/brief"
 
 interface AuthUser {
   id: string
@@ -33,6 +47,7 @@ const JSON_HEADERS = {
 }
 
 const CHAT_SERVER_ERROR = "LYTA server error. Please retry; request failed before streaming started."
+const REVIEW_EVIDENCE_TOP_K = 6
 
 interface Principal {
   user: AuthUser
@@ -82,7 +97,11 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
   const principal = await resolvePrincipal(request, env)
 
   const limitCategory =
-    url.pathname === "/library/import" ? "ingestion" : url.pathname === "/chat" || url.pathname === "/chat/stream" ? "chat-requests" : ""
+    url.pathname === "/library/import"
+      ? "ingestion"
+      : url.pathname === "/chat" || url.pathname === "/chat/stream" || (url.pathname === "/reviews" && request.method === "POST")
+        ? "chat-requests"
+        : ""
 
   if (limitCategory) {
     const limited = await enforceLimit(
@@ -175,7 +194,7 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
   }
 
   if (url.pathname === "/library" && request.method === "GET") {
-    return finalizePrincipalResponse(await forwardWorkspace(workspace, "/library"), principal)
+    return finalizePrincipalResponse(await forwardWorkspace(workspace, `/library${url.search}`), principal)
   }
 
   if (url.pathname === "/library/import" && request.method === "POST") {
@@ -295,6 +314,65 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
 
   if (url.pathname === "/context/manifests" && request.method === "GET") {
     return finalizePrincipalResponse(await forwardWorkspace(workspace, `/context/manifests${url.search}`), principal)
+  }
+
+  if (url.pathname === "/reviews" && request.method === "GET") {
+    return finalizePrincipalResponse(await forwardWorkspace(workspace, "/reviews"), principal)
+  }
+
+  if (url.pathname === "/reviews" && request.method === "POST") {
+    return finalizePrincipalResponse(await handleCreateReview(request, env, workspace, principal), principal)
+  }
+
+  const reviewRoute = url.pathname.match(/^\/reviews\/([A-Za-z0-9_-]{1,120})(?:\/(export)|\/findings\/([A-Za-z0-9_-]{1,20}))?$/)
+
+  if (reviewRoute) {
+    const [, reviewId, exportSegment, findingId] = reviewRoute
+
+    if (findingId && request.method === "POST") {
+      const body = await safeJson<{ disposition?: string; note?: string }>(request)
+      const disposition = normalizeDisposition(body?.disposition)
+
+      if (!disposition) {
+        return finalizePrincipalResponse(new Response("disposition must be accepted, rejected, or unresolved", { status: 400 }), principal)
+      }
+
+      return finalizePrincipalResponse(
+        await forwardWorkspace(workspace, "/reviews/disposition", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({ id: reviewId, findingId, disposition, note: normalizeDispositionNote(body?.note) })
+        }),
+        principal
+      )
+    }
+
+    if (!findingId && request.method === "GET") {
+      const response = await workspace.fetch("https://internal/reviews/get", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ id: reviewId })
+      })
+
+      if (!response.ok || !exportSegment) {
+        return finalizePrincipalResponse(copyResponse(response), principal)
+      }
+
+      const { review } = (await response.json()) as { review: ArchitectureReview }
+
+      return finalizePrincipalResponse(
+        new Response(renderReviewBrief(review), {
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="lyta-review-${review.id}.md"`,
+            "Cache-Control": "no-store"
+          }
+        }),
+        principal
+      )
+    }
+
+    return finalizePrincipalResponse(new Response("Method Not Allowed", { status: 405 }), principal)
   }
 
   const sessionId = normalizeSessionId(url.searchParams.get("session"))
@@ -455,6 +533,107 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
   }
 
   return new Response("Not Found", { status: 404 })
+}
+
+/**
+ * Architecture Change Review: retrieve evidence only from the selected
+ * library sources, ask the `deep` profile for a JSON review, validate it
+ * against the review contract, and persist it. A malformed model reply is
+ * reported as an error and never stored or shown as a review.
+ */
+async function handleCreateReview(request: Request, env: Env, workspace: DurableObjectStub, principal: Principal) {
+  const requestId = crypto.randomUUID()
+  const parsedInput = validateReviewInput(await safeJson(request))
+
+  if (!parsedInput.ok) {
+    return new Response(parsedInput.error, { status: 400 })
+  }
+
+  const input = parsedInput.value
+  const requestMetadata = {
+    requestId,
+    route: "/reviews",
+    sourceCount: input.sourceFileIds.length,
+    principalType: principal.user.isGuest ? "guest" : "account",
+    workspacePrefix: scopedPrefix(principal.workspaceKey)
+  }
+  const reviewError = (error: string, status: number, extra: Record<string, unknown> = {}) =>
+    noStoreJson({ error, requestId, ...extra }, undefined, { "X-Lyta-Request-Id": requestId }, status)
+
+  const tokenLimited = await enforceLimit(env, "chat-tokens", principal.workspaceKey, {
+    limit: principal.user.isGuest ? 40_000 : 240_000,
+    windowMs: 60 * 60_000,
+    cost: Math.max(1, Math.ceil((input.proposedChange.length + input.intendedOutcome.length + input.constraints.length) / 4))
+  })
+  if (tokenLimited) return tokenLimited
+
+  const retrieval = await searchWorkspaceLibrary(
+    env,
+    workspace,
+    { message: buildReviewQuery(input), mode: "deep", attachments: [] },
+    requestMetadata,
+    { sourceFileIds: input.sourceFileIds, topK: REVIEW_EVIDENCE_TOP_K, policyVersion: REVIEW_CONTEXT_POLICY_VERSION }
+  )
+
+  if (retrieval.failed) {
+    return reviewError("Unable to retrieve evidence from the selected sources. Please retry.", 502)
+  }
+
+  if (retrieval.unavailableSourceFileIds.length) {
+    return reviewError("Some selected sources are no longer available in this workspace. Reselect your sources and retry.", 409, {
+      unavailableSourceFileIds: retrieval.unavailableSourceFileIds
+    })
+  }
+
+  const evidence = toReviewEvidence(retrieval.citations)
+  const profile = getModelProfile("deep")
+  let modelReply: unknown
+
+  try {
+    const result = await callWithPolicy("ai.review", profile, (model) =>
+      env.AI.run(model, {
+        messages: buildReviewMessages(input, retrieval.selectedSources, evidence),
+        temperature: profile.temperature,
+        top_p: profile.top_p,
+        max_tokens: profile.max_tokens
+      })
+    )
+    modelReply = result && typeof result === "object" ? (result as { response?: unknown }).response : undefined
+  } catch (error) {
+    logServerError("router.review.model", error, requestMetadata)
+    return reviewError("The review model is unavailable right now. Please retry.", 502)
+  }
+
+  const output = parseReviewOutput(modelReply, evidence)
+
+  if (!output.ok) {
+    logServerError("router.review.output", new Error(output.error), requestMetadata)
+    return reviewError(`${output.error} No review was saved; please retry.`, 502)
+  }
+
+  const review: Omit<ArchitectureReview, "id" | "createdAt" | "updatedAt"> = {
+    ...output.value,
+    type: "architecture-change",
+    requestId,
+    input,
+    sources: retrieval.selectedSources,
+    evidence,
+    modelVersion: profile.modelVersion,
+    policyVersion: REVIEW_CONTEXT_POLICY_VERSION
+  }
+
+  const saved = await workspace.fetch("https://internal/reviews/save", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ review })
+  })
+
+  if (!saved.ok) {
+    logServerError("router.review.save", new Error(`Review storage rejected the review (${saved.status}).`), requestMetadata)
+    return reviewError("Unable to save the review right now.", 502)
+  }
+
+  return noStoreJson(await saved.json(), { requestId }, { "X-Lyta-Request-Id": requestId }, 201)
 }
 
 async function handleAuth(request: Request, env: Env, action: "register" | "login") {
@@ -799,8 +978,16 @@ async function searchWorkspaceLibrary(
   env: Env,
   workspace: DurableObjectStub,
   payload: ReturnType<typeof normalizeChatRequest>,
-  metadata: Record<string, unknown> = {}
+  metadata: Record<string, unknown> = {},
+  scope?: { sourceFileIds: string[]; topK: number; policyVersion: string }
 ) {
+  const empty = {
+    context: "",
+    citations: [] as LibraryCitation[],
+    selectedSources: [] as ReviewSource[],
+    unavailableSourceFileIds: [] as string[],
+    failed: false
+  }
   const userMessage: ChatMessageRecord = {
     role: "user",
     content: payload.message,
@@ -811,10 +998,7 @@ async function searchWorkspaceLibrary(
   const query = buildRetrievalQuery(userMessage)
 
   if (!query) {
-    return {
-      context: "",
-      citations: [] as LibraryCitation[]
-    }
+    return empty
   }
 
   try {
@@ -825,8 +1009,10 @@ async function searchWorkspaceLibrary(
       headers: JSON_HEADERS,
       body: JSON.stringify({
         queryVector,
-        topK: 4,
-        requestId: typeof metadata.requestId === "string" ? metadata.requestId : undefined
+        topK: scope?.topK ?? 4,
+        requestId: typeof metadata.requestId === "string" ? metadata.requestId : undefined,
+        sourceFileIds: scope?.sourceFileIds,
+        policyVersion: scope?.policyVersion
       })
     })
 
@@ -837,20 +1023,22 @@ async function searchWorkspaceLibrary(
         retrievalAttempted: true
       })
 
-      return {
-        context: "",
-        citations: [] as LibraryCitation[]
-      }
+      return { ...empty, failed: true }
     }
 
     const data = (await response.json()) as {
       context?: string
       citations?: LibraryCitation[]
+      selectedSources?: ReviewSource[]
+      unavailableSourceFileIds?: string[]
     }
 
     return {
       context: typeof data.context === "string" ? data.context : "",
-      citations: Array.isArray(data.citations) ? data.citations : []
+      citations: Array.isArray(data.citations) ? data.citations : [],
+      selectedSources: Array.isArray(data.selectedSources) ? data.selectedSources : [],
+      unavailableSourceFileIds: Array.isArray(data.unavailableSourceFileIds) ? data.unavailableSourceFileIds : [],
+      failed: false
     }
   } catch (error) {
     logServerError("router.library.search", error, {
@@ -858,10 +1046,7 @@ async function searchWorkspaceLibrary(
       retrievalAttempted: true
     })
 
-    return {
-      context: "",
-      citations: [] as LibraryCitation[]
-    }
+    return { ...empty, failed: true }
   }
 }
 

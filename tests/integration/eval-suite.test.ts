@@ -15,7 +15,7 @@ import type { Env } from "../../src/index"
 // actually "better." See eval/README.md for the promotion policy and how to
 // run this dataset against a real model manually before promoting one.
 
-interface EvalCase {
+interface ChatEvalCase {
   id: string
   category: "citation-accuracy" | "insufficient-evidence" | "general-quality"
   mode: "instant" | "deep" | "creative"
@@ -25,6 +25,24 @@ interface EvalCase {
   expectCitation: boolean
   mustContainPhrase?: string
 }
+
+// Architecture Change Review cases post to /reviews instead of /chat. The
+// scripted `reviewReply` is the model's JSON (or deliberately malformed text);
+// the case checks what survives the review contract's validation.
+interface ReviewEvalCase {
+  id: string
+  category: "architecture-review"
+  mode: "deep"
+  sourceFixture?: string
+  sourceDocuments?: Array<{ name: string; text: string }>
+  review: { proposedChange: string; intendedOutcome: string; constraints?: string }
+  reviewReply: unknown
+  expectStatus: number
+  expectReadiness?: string
+  expectCitation: boolean
+}
+
+type EvalCase = ChatEvalCase | ReviewEvalCase
 
 interface EvalDataset {
   version: string
@@ -111,19 +129,13 @@ function extractCookie(response: Response, name: string) {
 }
 
 async function runCase(evalCase: EvalCase) {
+  if (evalCase.category === "architecture-review") {
+    return runReviewCase(evalCase)
+  }
+
   const env = createEvalEnv(evalCase.modelReply)
 
-  const registerResponse = await router(
-    new Request("https://internal/auth/register", {
-      method: "POST",
-      body: JSON.stringify({ email: `${evalCase.id}@eval.test`, password: "eval-suite-password" })
-    }),
-    env
-  )
-  const authCookie = extractCookie(registerResponse, "lyta_auth")
-
-  const authedRequest = (url: string, init: RequestInit = {}) =>
-    router(new Request(url, { ...init, headers: { ...(init.headers || {}), Cookie: authCookie, "Content-Type": "application/json" } }), env)
+  const authedRequest = await registerEvalUser(env, evalCase.id)
 
   const sessionResponse = await authedRequest("https://internal/sessions/create", { method: "POST" })
   const { session } = (await sessionResponse.json()) as { session: { id: string } }
@@ -171,6 +183,77 @@ async function runCase(evalCase: EvalCase) {
   }
 
   return { id: evalCase.id, category: evalCase.category, passed: failures.length === 0, failures }
+}
+
+async function runReviewCase(evalCase: ReviewEvalCase) {
+  const reply = typeof evalCase.reviewReply === "string" ? evalCase.reviewReply : JSON.stringify(evalCase.reviewReply)
+  const env = createEvalEnv(reply)
+  const authedRequest = await registerEvalUser(env, evalCase.id)
+  const documents = evalCase.sourceFixture
+    ? [
+        {
+          name: evalCase.sourceFixture.split("/").pop()!,
+          text: readFileSync(new URL(`../../${evalCase.sourceFixture}`, import.meta.url), "utf8")
+        }
+      ]
+    : evalCase.sourceDocuments || []
+  const sourceFileIds: string[] = []
+
+  for (const document of documents) {
+    const imported = await authedRequest("https://internal/library/import", {
+      method: "POST",
+      body: JSON.stringify({
+        attachments: [
+          { kind: "document", name: document.name, mimeType: "text/markdown", size: document.text.length, extractedText: document.text }
+        ]
+      })
+    })
+    const { files } = (await imported.json()) as { files: Array<{ libraryFileId: string }> }
+    sourceFileIds.push(files[0].libraryFileId)
+  }
+
+  const response = await authedRequest("https://internal/reviews", {
+    method: "POST",
+    body: JSON.stringify({ ...evalCase.review, sourceFileIds })
+  })
+  const body = (await response.json()) as {
+    review?: { readiness: string; evidence: unknown[]; findings: Array<{ classification: string; citationIds: string[] }> }
+  }
+  const failures: string[] = []
+  const citedFindings =
+    body.review?.findings.filter((finding) => finding.classification === "evidence-backed" && finding.citationIds.length) || []
+
+  if (response.status !== evalCase.expectStatus) {
+    failures.push(`expected ${evalCase.expectStatus}, got ${response.status}`)
+  }
+  if (evalCase.expectStatus !== 201 && body.review) {
+    failures.push("a review was returned for a failed request")
+  }
+  if (evalCase.expectReadiness && body.review?.readiness !== evalCase.expectReadiness) {
+    failures.push(`expected readiness "${evalCase.expectReadiness}", got "${body.review?.readiness}"`)
+  }
+  if (evalCase.expectCitation && !citedFindings.length) {
+    failures.push("expected at least one evidence-backed finding with a citation, got none")
+  }
+  if (!evalCase.expectCitation && citedFindings.length) {
+    failures.push(`expected no evidence-backed citations, got ${citedFindings.length}`)
+  }
+
+  return { id: evalCase.id, category: evalCase.category, passed: failures.length === 0, failures }
+}
+
+async function registerEvalUser(env: Env, id: string) {
+  const registerResponse = await router(
+    new Request("https://internal/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email: `${id}@eval.test`, password: "eval-suite-password" })
+    }),
+    env
+  )
+  const authCookie = extractCookie(registerResponse, "lyta_auth")
+
+  return (url: string, init: RequestInit = {}) =>
+    router(new Request(url, { ...init, headers: { ...(init.headers || {}), Cookie: authCookie, "Content-Type": "application/json" } }), env)
 }
 
 test(`eval suite (version ${dataset.version}) meets its documented baseline pass rate`, async () => {

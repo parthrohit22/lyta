@@ -10,8 +10,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/mammoth@1.12.1/mammoth.browser.min.js" integrity="sha384-HDD+X9TzmVU2HzA3VYqphTtip2QgcmmSAuKTMkFv709AUMZ6LPn0ysDRZeQIL31w" crossorigin="anonymous" defer></script>
 <script src="/app-core.js" defer></script>
+<script src="/app-review-core.js" defer></script>
 <script src="/app-attachments.js" defer></script>
 <script src="/app.js" defer></script>
+<script src="/app-review.js" defer></script>
 </head>
 <body>
 
@@ -30,6 +32,7 @@
   <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
   <symbol id="icon-more" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
   <symbol id="icon-bookmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></symbol>
+  <symbol id="icon-review" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 011 1v2H8V4a1 1 0 011-1z"/><path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2"/><polyline points="9 14 11 16 15 12"/></symbol>
   <symbol id="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
 </svg>
 
@@ -52,6 +55,11 @@
     <button id="newChat" class="primary-button full-width" type="button" aria-label="Create new chat">
       <svg class="icon" aria-hidden="true"><use href="#icon-plus"></use></svg>
       <span class="sidebar-label">New Chat</span>
+    </button>
+
+    <button id="openReview" class="secondary-button full-width" type="button" aria-label="Review a change" aria-haspopup="dialog">
+      <svg class="icon" aria-hidden="true"><use href="#icon-review"></use></svg>
+      <span class="sidebar-label">Review a change</span>
     </button>
 
     <div class="sidebar-scroll">
@@ -369,6 +377,72 @@
       <div class="shortcut-row"><dt><kbd>Esc</kbd></dt><dd>Close panel</dd></div>
       <div class="shortcut-row"><dt><kbd>⌘</kbd><kbd>B</kbd></dt><dd>Toggle sidebar</dd></div>
     </dl>
+  </div>
+</section>
+
+<div id="reviewOverlay" class="overlay" hidden></div>
+
+<section id="reviewDialog" role="dialog" aria-modal="true" aria-labelledby="reviewTitle" hidden aria-hidden="true">
+  <div class="modal-card review-card">
+    <div class="panel-header">
+      <div>
+        <p class="meta-label">Architecture Change Review</p>
+        <h2 id="reviewTitle" tabindex="-1">Review a change</h2>
+      </div>
+      <button id="closeReview" class="icon-button" type="button" aria-label="Close review">
+        <svg class="icon" aria-hidden="true"><use href="#icon-x"></use></svg>
+      </button>
+    </div>
+
+    <div id="reviewFormView">
+      <p class="auth-copy">
+        Describe a proposed technical change and pick the library files to check it against. LYTA returns a readiness verdict where every finding is labelled as evidence-backed, inference, recommendation, or insufficient evidence.
+      </p>
+
+      <form id="reviewForm" class="review-form" novalidate>
+        <label class="settings-field">
+          <span>Proposed change</span>
+          <textarea id="reviewChange" rows="4" maxlength="4000" required placeholder="e.g. Move API gateway sessions from the in-process cache to Redis"></textarea>
+        </label>
+
+        <label class="settings-field">
+          <span>Intended outcome</span>
+          <textarea id="reviewOutcome" rows="2" maxlength="1200" required placeholder="What should be true once this ships?"></textarea>
+        </label>
+
+        <label class="settings-field">
+          <span>Constraints (optional)</span>
+          <textarea id="reviewConstraints" rows="2" maxlength="1200" placeholder="Latency budgets, deadlines, compliance rules"></textarea>
+        </label>
+
+        <fieldset class="review-sources">
+          <legend>Evidence sources</legend>
+          <div id="reviewSourceList" class="review-source-list"></div>
+        </fieldset>
+
+        <div class="settings-actions">
+          <button id="reviewSubmit" class="primary-button" type="submit">Run review</button>
+        </div>
+        <p id="reviewStatus" class="settings-note" role="status" aria-live="polite"></p>
+      </form>
+
+      <section id="reviewHistory" class="review-history" aria-labelledby="reviewHistoryTitle" hidden>
+        <h3 id="reviewHistoryTitle" class="meta-label">Recent reviews</h3>
+        <ul id="reviewHistoryList" class="review-history-list"></ul>
+      </section>
+    </div>
+
+    <div id="reviewBriefView" hidden>
+      <div class="settings-actions">
+        <button id="reviewBack" class="secondary-button" type="button">New review</button>
+        <button id="reviewExport" class="secondary-button" type="button">
+          <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+          Export brief
+        </button>
+      </div>
+      <p id="reviewBriefStatus" class="settings-note" role="status" aria-live="polite"></p>
+      <div id="reviewBrief" class="review-brief"></div>
+    </div>
   </div>
 </section>
 

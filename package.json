@@ -10,7 +10,7 @@
 		"test:integration": "tsx --test tests/integration/**/*.test.ts",
 		"test:eval": "tsx --test tests/integration/eval-suite.test.ts",
 		"test:smoke": "tsx --test tests/smoke/**/*.test.ts",
-		"check": "npm run format:check && npm run build:client && npm run test:unit && npm run test:integration && npm run test:smoke && tsc --noEmit && tsc -p tsconfig.client.json --noEmit && node --check pages/app-core.js && node --check pages/app.js && node --check pages/app-attachments.js && git diff --exit-code -- pages/app-core.js && npm audit --omit=dev --audit-level=high",
+		"check": "npm run format:check && npm run build:client && npm run test:unit && npm run test:integration && npm run test:smoke && tsc --noEmit && tsc -p tsconfig.client.json --noEmit && node --check pages/app-core.js && node --check pages/app.js && node --check pages/app-attachments.js && node --check pages/app-review-core.js && node --check pages/app-review.js && git diff --exit-code -- pages/app-core.js pages/app-review-core.js && npm audit --omit=dev --audit-level=high",
 		"deploy": "npm run build:client && wrangler deploy",
 		"test": "npm run build:client && npm run test:unit && npm run test:integration && npm run test:smoke",
 		"dev": "wrangler dev",
