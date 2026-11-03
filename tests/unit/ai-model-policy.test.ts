@@ -117,7 +117,7 @@ test("runAI resolves the instant profile and returns a successful response", asy
   assert.equal(calls.length, 1)
 })
 
-test("runAI wraps a total failure as 'Workers AI request failed.'", async () => {
+test("runAI wraps a total failure as a profile-named ModelError", async () => {
   const env = {
     AI: {
       run: async () => {
@@ -126,13 +126,16 @@ test("runAI wraps a total failure as 'Workers AI request failed.'", async () => 
     }
   }
 
-  await assert.rejects(runAI(env, [{ role: "user", content: "hi" }], { mode: "instant" }), /Workers AI request failed\./)
+  await assert.rejects(runAI(env, [{ role: "user", content: "hi" }], { mode: "instant" }), /Instant model request failed \(upstream\)\./)
 })
 
 test("runAIStream applies policy only to obtaining the stream, and rejects a non-stream result", async () => {
   const env = { AI: { run: async () => ({ response: "not a stream" }) } }
 
-  await assert.rejects(runAIStream(env, [{ role: "user", content: "hi" }], { mode: "instant" }), /Workers AI stream failed\./)
+  await assert.rejects(
+    runAIStream(env, [{ role: "user", content: "hi" }], { mode: "instant" }),
+    /Instant model request failed \(upstream\)\./
+  )
 })
 
 test("runAIStream returns the stream once env.AI.run resolves it", async () => {
