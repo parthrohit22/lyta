@@ -291,6 +291,9 @@ test("a challenge that changes the conclusion revises or withdraws the finding a
   const challengeRecord = revised.body.challenge!
   const adrEvidence = revised.body.review!.evidence.find((item) => item.ref === "E7")!
   assert.equal(adrEvidence.fileId, adrId, "the ADR passage is appended as E7")
+  assert.equal(adrEvidence.retrievedFor, "F2-C1", "the passage records which retrieval surfaced it")
+  assert.equal(adrEvidence.rank, 1)
+  assert.ok(review.evidence.every((item, index) => item.retrievedFor === "review" && item.rank === index + 1 && item.retrievalSize === 6))
   assert.equal(challengeRecord.outcome, "revised")
   assert.equal(challengeRecord.conclusionChanged, true)
   assert.deepEqual(challengeRecord.counterEvidenceIds, [adrEvidence.chunkId])
