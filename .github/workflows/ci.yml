@@ -58,11 +58,11 @@ jobs:
             echo "origin/main not resolvable in this context; skipping the config-delta report."
             exit 0
           fi
-          if git diff --quiet origin/main...HEAD -- src/config/modelProfiles.ts; then
-            echo "No changes to src/config/modelProfiles.ts in this change set."
+          if git diff --quiet origin/main...HEAD -- src/ai/registry.ts src/config/modelProfiles.ts; then
+            echo "No changes to the model registry or src/config/modelProfiles.ts in this change set."
           else
             echo "Model/prompt configuration changed — review these target deltas before merging:"
-            git diff origin/main...HEAD -- src/config/modelProfiles.ts
+            git diff origin/main...HEAD -- src/ai/registry.ts src/config/modelProfiles.ts
           fi
 
       - name: Type-check Worker source

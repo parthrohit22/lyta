@@ -275,13 +275,81 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 
 ## Model Configuration and Evaluation
 
-`src/config/modelProfiles.ts` is the single source of truth for per-mode
-model selection: model id, version label, timeout, retry budget, fallback
-model, and documented latency/cost/quality targets for `Instant` and `Deep`
-(`Deep Review`). `src/services/ai.ts`'s `callWithPolicy()` wraps every
-Workers AI call with that timeout/retry/fallback policy and records the
-outcome as non-sensitive telemetry (model, version, retry count, fallback
-used, timed out) — never prompt or response content.
+Product workflows ask for a **profile**, not a model. `src/ai/registry.ts`
+is the source of truth for both:
+
+- `MODEL_REGISTRY` lists every approved model with its capabilities (text,
+  vision, structured output, tool calling, streaming, embeddings), limits,
+  privacy class, availability, cost policy, and evaluation result.
+- `PRODUCT_PROFILES` defines the user-facing profiles `Instant`, `Deep Review`
+  and `Visual Review`, and the internal `Creative` and `Embedding` profiles.
+  Each one declares the capabilities it needs, the privacy classes it allows,
+  its candidate models in fallback order, its timeout/retry policy, and its
+  latency/cost/quality targets.
+
+`resolveProfile()` picks the first enabled, evaluated, capability-compatible
+candidate as primary and the next one as fallback. When nothing qualifies it
+fails with a clear `no_compatible_model` error. Requests add their own needs:
+a message with an image requires vision, so it never falls back to the
+text-only 8B model, and a long prompt skips models whose context window is
+too small. `src/config/modelProfiles.ts` derives the legacy per-mode
+`MODEL_PROFILES` from the registry, so `getModelProfile()` callers see the
+same values as before.
+
+All calls go through `src/services/ai.ts` (`runAI`, `runAIStream`,
+`runStructured`, and `createEmbedding` in `src/services/embeddings.ts`). These
+call a provider-neutral `ModelProvider` adapter (`src/ai/providers/`), and
+`callWithPolicy()` applies timeout, retry, fallback and cancellation.
+Provider errors are normalized to one `ModelError` code set. A failed call
+returns a transparent `degraded` message naming the profile, rather than
+quietly switching to a model that can't do what the profile promises.
+Responses carry the profile, its data-handling policy and the serving model
+as metadata. `GET /models/profiles` lists the user-facing profiles in the
+same shape for the UI.
+
+Adding a model is a registry entry plus an evaluation result; see
+[`docs/runbooks/provider-change.md`](docs/runbooks/provider-change.md).
+`tests/unit/model-registry.test.ts` enforces the registry rules, and
+`tests/unit/model-provider-contract.test.ts` runs one structured contract
+against a mock provider and every adapter.
+
+### Model gateway (Cloudflare AI Gateway)
+
+Gateway routing is optional and off by default:
+
+| Setting | Kind | Effect |
+| --- | --- | --- |
+| `AI_GATEWAY_ID` | Worker var | Gateway name. When set, every Workers AI call (chat, streaming, structured output, embeddings, and route-level `env.AI.run` calls) uses the binding's `gateway` option. |
+| `AI_GATEWAY_REQUIRED` | Worker var | `"true"` makes a missing or invalid `AI_GATEWAY_ID` fail closed (`not_configured`) instead of calling Workers AI directly. Set it in production once the gateway exists. |
+| `AI_EXTERNAL_PROVIDERS` | Worker var | `"enabled"` allows external-provider registry entries. It has no effect without a gateway, and the only external entry ships disabled. |
+| `AI_EXTERNAL_PROVIDER_KEY` | Worker secret | Only needed if an external provider's key isn't stored in the gateway (BYOK). Set it with `wrangler secret put`, never in `wrangler.jsonc`. |
+
+With no `AI_GATEWAY_ID`, LYTA calls Workers AI directly. That is the
+documented path for local development (`wrangler dev`) and for the test
+suites. To try the gateway path, create a gateway in the Cloudflare dashboard
+(AI → AI Gateway), then add a var:
+
+```bash
+npx wrangler dev --remote --var AI_GATEWAY_ID:<your-gateway-name>
+```
+
+Every gateway request sends `collectLog: false` (the gateway keeps no
+prompt/response log), `skipCache: true`, the profile's `requestTimeoutMs`, and
+`retries.maxAttempts: 1`, because retries and capability-aware fallback stay
+in the Worker. It also sends four metadata fields: `profile`, `route`, a hashed
+`workspace` tag, and `attempt`. Each call also writes one content-free
+`[lyta-operation]` log line with profile, provider, model, workspace tag,
+latency, retry/fallback, error code and estimated cost, which gives
+per-workspace and per-profile cost, latency and error attribution without
+source text or credentials. Gateway-side rate limits are configured on the
+gateway itself; LYTA's per-identity limiter still applies either way.
+
+**Verification status:** the gateway path is covered by unit tests against a
+mocked `AI` binding. No real gateway has been created for LYTA yet, so it has
+not been exercised end to end. Operating procedures live in
+[`docs/runbooks/`](docs/runbooks/README.md).
+
+### Evaluation
 
 `eval/dataset.json` is a versioned evaluation baseline (citation accuracy,
 insufficient-evidence compliance, cross-mode sanity checks) that CI runs on
