@@ -28,6 +28,7 @@ The current product experience is intentionally minimal. The interface focuses o
 
 ## What LYTA Does
 
+- **Architecture Change Review**: paste a proposed technical change, pick the library files to check it against, and get a structured review brief instead of a chat reply — a `ready` / `needs evidence` / `blocked` verdict with rationale, findings classified as evidence-backed, inference, recommendation, or insufficient evidence, source excerpts for every citation, per-finding accept/reject/unresolved dispositions, and a Markdown export.
 - Starts immediately in guest mode with temporary server-backed workspace state.
 - Supports account workspaces for persisted chats, files, profile data, and preferences.
 - Ingests PDFs, DOCX, TXT, Markdown, CSV, JSON, HTML, XML, and images.
@@ -58,11 +59,14 @@ The streaming path is hardened for demo reliability. `/chat/stream` establishes 
 4. Reuse the uploaded file from the library in another chat.
 5. Compare `Instant`, `Deep`, and `Creative` response modes.
 6. Pin a response to the output board and copy or download it.
-7. Sign in to move from temporary guest state to a saved account workspace.
+7. Click **Review a change** in the sidebar, describe a proposed change and its intended outcome, select
+   the uploaded file as an evidence source, and run the review. Open a finding to inspect its source
+   excerpt, accept or reject it, then export the brief as Markdown.
+8. Sign in to move from temporary guest state to a saved account workspace.
 
 Prefer not to type your own material? [`fixtures/demo-architecture-change.md`](fixtures/demo-architecture-change.md)
-is a short, clearly-fictional sample change proposal you can upload in step 3 instead — safe public
-material for demoing retrieval and citations.
+is a short, clearly-fictional sample change proposal you can upload in step 3 and review in step 7 —
+safe public material for demoing retrieval, citations, and Architecture Change Review.
 
 ## Architecture
 
@@ -133,6 +137,9 @@ More detail lives in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - Minimal output board with copy and Markdown download
 - Request-id based chat error correlation
 - Graceful degradation for AI/retrieval failures
+- Architecture Change Review: source-scoped evidence retrieval, a strictly validated JSON review
+  contract, readiness verdicts, classified findings with citations, dispositions that promote accepted
+  findings into project context, and Markdown brief export
 
 ### Known Tradeoffs
 
@@ -160,9 +167,12 @@ pages/
   app-core.js              Generated browser utility bundle
   app-attachments.js       Browser-side attachment preparation
   app.js                   Client logic for auth, chat, uploads, board, settings
+  app-review-core.js       Generated review helper bundle
+  app-review.js            Architecture Change Review dialog
 
 pages-src/
   app-core.ts              TypeScript source for app-core.js
+  app-review-core.ts       TypeScript source for app-review-core.js
 
 src/
   index.ts                 Worker entry point
@@ -174,6 +184,10 @@ src/
     workspace.ts           Workspace state, file library, preferences
     conversation.ts        Chat memory, streaming, follow-ups, summaries
   library/chunks.ts        Document chunking and citation formatting
+  review/
+    contract.ts            Review input/output contract and strict output validation
+    prompt.ts              JSON review prompt over untrusted, source-scoped evidence
+    brief.ts               Markdown review brief export
   services/
     ai.ts                  Workers AI chat calls
     embeddings.ts          Embedding generation
@@ -272,6 +286,7 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 | History retention | `tests/integration/conversation-history.test.ts`, `tests/integration/workspace-artifacts.test.ts` |
 | Log redaction | `tests/unit/log-redaction.test.ts` |
 | Full request pipeline | `tests/smoke/smoke.test.ts` |
+| Architecture Change Review (happy, missing-evidence, conflicting, inaccessible-source paths) | `tests/integration/architecture-review.test.ts`, `tests/unit/review-contract.test.ts` |
 
 ## Model Configuration and Evaluation
 
@@ -335,6 +350,38 @@ Authenticated workspace APIs support inspection and management:
 Deleting a source also removes derived context records linked to that source
 and returns the affected-record count. Historical ID-only manifests remain as
 audit evidence; deleted source text is not retrievable.
+
+## Architecture Change Review
+
+A review is a separate workflow from chat, with its own contract
+(`src/review/contract.ts`):
+
+- `POST /reviews` takes `proposedChange`, `intendedOutcome`, optional
+  `constraints`, and `sourceFileIds` (1–8 library files). Retrieval is scoped to
+  those files only; an id that is not in the caller's library (deleted, or
+  another workspace's) is refused with `409` before the model runs. The `Deep`
+  model profile is called through `callWithPolicy()` with a JSON-only prompt,
+  and the retrieval writes a context manifest under policy
+  `2026-11-03.architecture-review`.
+- The model's JSON is validated strictly. Malformed output (not JSON, unknown
+  readiness or classification, missing rationale or findings) returns `502` and
+  nothing is stored. Grounding problems are corrected and recorded in
+  `adjustments`: citations not in the retrieved evidence are dropped, an
+  `evidence-backed` finding with no valid citation becomes `inference`, a
+  conflict needs two distinct retrieved chunks, and `ready` is lowered to
+  `needs evidence` when there is no evidence, no evidence-backed finding, or an
+  unreconciled conflict.
+- `GET /reviews` lists reviews; `GET /reviews/:id` returns one.
+- `POST /reviews/:id/findings/:findingId` with `{ "disposition": "accepted" |
+  "rejected" | "unresolved", "note"? }` records a disposition. Accepting a
+  finding saves it as a `finding` context record with chunk-level provenance;
+  any other disposition removes that record.
+- `GET /reviews/:id/export` returns a Markdown brief with the readiness verdict,
+  finding classifications and dispositions, source file names, and excerpts.
+
+Deleting a cited source clears its excerpts from stored reviews (the brief then
+says the source was deleted) and invalidates accepted findings that depended
+on it.
 
 ## Roadmap Ideas
 

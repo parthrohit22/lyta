@@ -67,6 +67,7 @@ Purpose:
 - maintain the workspace chat list
 - store reusable uploaded files
 - store searchable document chunks and vectors
+- store architecture change reviews and their finding dispositions
 
 Why:
 
@@ -204,6 +205,57 @@ Why this is useful for the project:
 - easier to understand in a portfolio setting
 - fewer moving parts for a small but serious product
 - keeps the architecture emphasis on system design rather than framework ceremony
+
+The Architecture Change Review dialog lives in `pages/app-review.js`, with its
+typed, DOM-free helpers compiled from `pages-src/app-review-core.ts`. It is kept
+out of `app.js` so the review workflow can grow without touching the chat client.
+
+## Architecture Change Review
+
+Reviews are the flagship workflow: a proposed change is checked against
+selected workspace sources and the result is a structured brief, not a chat
+reply.
+
+```mermaid
+sequenceDiagram
+    participant UI as Review dialog
+    participant R as Worker Router
+    participant W as Workspace DO
+    participant AI as Workers AI (Deep profile)
+    UI->>R: POST /reviews (change, outcome, sourceFileIds)
+    R->>R: validateReviewInput()
+    R->>W: /library/search (query vector, sourceFileIds)
+    W-->>R: citations from selected files only + unavailable ids
+    Note over W: records an ID-only context manifest
+    R->>AI: callWithPolicy(deep, JSON review prompt over untrusted evidence)
+    AI-->>R: JSON review
+    R->>R: parseReviewOutput(): reject malformed output,<br/>drop invented citations, downgrade unsupported claims
+    R->>W: /reviews/save
+    R-->>UI: review brief
+```
+
+Design decisions:
+
+- **Retrieval stays at the router, scoped in the Workspace DO.** The router
+  reuses `searchWorkspaceLibrary()`; the Workspace DO filters chunks to the
+  selected file ids and reports ids that are not in this workspace's library,
+  so a deleted or cross-workspace source is refused instead of silently
+  reviewed without it.
+- **The model never gets to define what counts as evidence.** Evidence is
+  addressed by short refs (`E1`, `E2`, ...) that map to canonical chunk ids.
+  Validation keeps only citations from that set, so `evidence-backed` always
+  means "a retrieved chunk the user can inspect supports this."
+- **Validation corrects grounding but rejects structure.** A malformed reply is
+  an error and is never stored. A well-formed reply with weak grounding is kept,
+  with every server-side correction listed in `adjustments` and shown in the
+  brief, so reviewers can see what the server changed and why.
+- **Dispositions reuse canonical context.** Accepting a finding writes a
+  `finding` context record with chunk-level provenance, so the existing
+  source-deletion path invalidates it like any other derived record. Deleting
+  a source also clears its excerpts from stored reviews.
+
+Not yet implemented: "challenge this conclusion" counter-evidence search,
+review types beyond architecture changes, and owner/date fields on the input.
 
 ## Output Board Philosophy
 
