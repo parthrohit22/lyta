@@ -42,6 +42,13 @@ export interface PolicyOptions {
   }
 }
 
+/**
+ * Failures another attempt can't fix: the caller gave up, the account is out
+ * of budget (every Workers AI model draws on the same allocation), or routing
+ * is misconfigured. Retrying them only adds latency and cost.
+ */
+const STOP_RETRYING: ReadonlySet<ModelError["code"]> = new Set(["cancelled", "billing_limit", "not_configured"])
+
 class ModelTimeoutError extends Error {
   override name = "ModelTimeoutError"
 }
@@ -79,7 +86,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, signal?: AbortSi
  *
  * This is the in-Worker half of the policy. When AI_GATEWAY_ID is set the
  * adapters also send each attempt through Cloudflare AI Gateway (see
- * src/ai/gateway.ts). A cancelled call is never retried.
+ * src/ai/gateway.ts). Cancelled, billing-limited and misconfigured calls are
+ * not retried (see STOP_RETRYING).
  */
 export async function callWithPolicy<T>(
   route: string,
@@ -140,7 +148,7 @@ export async function callWithPolicy<T>(
         timedOut = true
       }
 
-      if (error instanceof ModelError && error.code === "cancelled") {
+      if (STOP_RETRYING.has(normalizeModelError(error).code)) {
         break
       }
     }

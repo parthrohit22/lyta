@@ -219,6 +219,14 @@ test("a profile naming a model that is not in the registry is reported", () => {
   assert.ok(validateRegistry(MODEL_REGISTRY, profiles).some((problem) => /does-not-exist is not in the registry/.test(problem)))
 })
 
+test("a profile whose reply budget exceeds a candidate's output ceiling is reported", () => {
+  const small = candidateEntry({ limits: { contextTokens: 32_000, maxOutputTokens: 512 } })
+  const profiles = cloneProfiles()
+  profiles["deep-review"].candidates = [small.id, ...profiles["deep-review"].candidates]
+
+  assert.ok(validateRegistry([...MODEL_REGISTRY, small], profiles).some((problem) => /max_tokens 1800 exceeds/.test(problem)))
+})
+
 test("the embedding profile never falls back to a different embedding model", () => {
   const second = candidateEntry({
     id: "workers-ai/other-embeddings",

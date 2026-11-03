@@ -177,6 +177,18 @@ test("a cancelled call stops immediately and is not retried or sent to the fallb
   assert.equal(ai.calls.length, 1)
 })
 
+test("a billing-limit failure is not retried or sent to the fallback, and says so plainly", async () => {
+  const ai = recordingAI(() => {
+    throw new Error("4006: you have used up your daily free allocation of 10,000 neurons")
+  })
+
+  const error = await runAI({ AI: ai.AI }, [{ role: "user", content: "hi" }], { mode: "deep" }).catch((caught) => caught)
+
+  assert.equal(error.code, "billing_limit")
+  assert.equal(ai.calls.length, 1)
+  assert.equal(describeModelFailure(error).message, "Deep Review has reached its usage limit for now. Please retry later.")
+})
+
 test("structured output retries an unusable reply and then returns the validated value", async () => {
   let attempt = 0
   const ai = recordingAI(() => ({ response: attempt++ === 0 ? "not json" : '{"verdict":"ok"}' }))

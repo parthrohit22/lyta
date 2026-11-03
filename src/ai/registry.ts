@@ -347,8 +347,12 @@ export function validateRegistry(
 
   for (const profile of Object.values(profiles)) {
     for (const candidate of profile.candidates) {
-      if (!ids.has(candidate)) {
+      const entry = registry.find((item) => item.id === candidate)
+
+      if (!entry) {
         problems.push(`${profile.id}: candidate ${candidate} is not in the registry`)
+      } else if (profile.policy.max_tokens > entry.limits.maxOutputTokens) {
+        problems.push(`${profile.id}: max_tokens ${profile.policy.max_tokens} exceeds ${candidate}'s ceiling`)
       }
     }
   }
