@@ -61,7 +61,9 @@ The streaming path is hardened for demo reliability. `/chat/stream` establishes 
 6. Pin a response to the output board and copy or download it.
 7. Click **Review a change** in the sidebar, describe a proposed change and its intended outcome, select
    the uploaded file as an evidence source, and run the review. Open a finding to inspect its source
-   excerpt, accept or reject it, then export the brief as Markdown.
+   excerpt, challenge a conclusion, save findings as decisions or risks (see **Project records**), then
+   export the brief as Markdown. [`docs/demo/review-walkthrough.md`](docs/demo/review-walkthrough.md)
+   is the full demo and usability script.
 8. Sign in to move from temporary guest state to a saved account workspace.
 
 Prefer not to type your own material? [`fixtures/demo-architecture-change.md`](fixtures/demo-architecture-change.md)
@@ -138,8 +140,9 @@ More detail lives in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - Request-id based chat error correlation
 - Graceful degradation for AI/retrieval failures
 - Architecture Change Review: source-scoped evidence retrieval, a strictly validated JSON review
-  contract, readiness verdicts, classified findings with citations, dispositions that promote accepted
-  findings into project context, and Markdown brief export
+  contract, readiness verdicts, classified findings with citations, "challenge this conclusion"
+  counter-evidence search with history, accepted findings saved as decision/risk/assumption/follow-up
+  records, and Markdown brief export
 
 ### Known Tradeoffs
 
@@ -287,6 +290,7 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 | Log redaction | `tests/unit/log-redaction.test.ts` |
 | Full request pipeline | `tests/smoke/smoke.test.ts` |
 | Architecture Change Review (happy, missing-evidence, conflicting, inaccessible-source paths) | `tests/integration/architecture-review.test.ts`, `tests/unit/review-contract.test.ts` |
+| Review challenges and project records (changed, unchanged, insufficient counter-evidence) | `tests/integration/review-challenge.test.ts`, `tests/unit/review-contract.test.ts` |
 
 ## Model Configuration and Evaluation
 
@@ -342,8 +346,8 @@ Authenticated workspace APIs support inspection and management:
 
 - `GET /context` lists context metadata; add `?includeContent=true` to inspect
   saved findings, decisions, and summaries.
-- `POST /context/records` creates or updates a finding, decision, or approved
-  summary with source/chunk provenance.
+- `POST /context/records` creates or updates a finding, decision, risk,
+  assumption, follow-up, or approved summary with source/chunk provenance.
 - `POST /context/records/delete` deletes a saved context record.
 - `GET /context/manifests` lists non-sensitive selection audit records.
 
@@ -377,7 +381,27 @@ A review is a separate workflow from chat, with its own contract
   finding saves it as a `finding` context record with chunk-level provenance;
   any other disposition removes that record.
 - `GET /reviews/:id/export` returns a Markdown brief with the readiness verdict,
-  finding classifications and dispositions, source file names, and excerpts.
+  finding classifications and dispositions, challenge history, source file
+  names, and excerpts.
+- `POST /reviews/:id/findings/:findingId/challenge` with `{ "reason"? }`
+  ("Challenge this conclusion") searches the review's own sources for
+  counter-evidence to one finding and validates the model's verdict with the
+  same contract: `upheld`, `revised`, `withdrawn`, or `insufficient evidence`.
+  A conclusion only changes when the reply cites retrieved counter-evidence;
+  with nothing retrieved the model is not called. Every challenge is appended
+  to the finding's history with its before/after state, and a changed
+  conclusion clears the old disposition and its record.
+
+Accepted findings become project records. The disposition body takes
+`recordAs: "finding" | "decision" | "risk" | "assumption" | "follow-up"`, and
+the record is stored as a canonical context record with chunk provenance and a
+link back to its review. **Project records** in the sidebar lists them by kind
+(`GET /context?includeContent=true`).
+
+Reviews also return `assumptions`, `openQuestions`, and `nextActions`.
+
+A demo and usability script for upload → review → inspect evidence →
+challenge → export lives in [`docs/demo/review-walkthrough.md`](docs/demo/review-walkthrough.md).
 
 Deleting a cited source clears its excerpts from stored reviews (the brief then
 says the source was deleted) and invalidates accepted findings that depended

@@ -254,8 +254,39 @@ Design decisions:
   source-deletion path invalidates it like any other derived record. Deleting
   a source also clears its excerpts from stored reviews.
 
-Not yet implemented: "challenge this conclusion" counter-evidence search,
-review types beyond architecture changes, and owner/date fields on the input.
+### Challenging a conclusion
+
+`POST /reviews/:id/findings/:findingId/challenge` re-runs retrieval over the
+review's own sources with a query built from the finding and the reviewer's
+doubt, then asks the `deep` profile for a verdict on that one finding.
+
+- **Same contract, same rules.** `parseChallengeOutput()` rejects malformed
+  replies and keeps only citations from the retrieved set. A `revised` or
+  `withdrawn` verdict without retrieved counter-evidence becomes
+  `insufficient evidence`. When retrieval returns nothing, the model is not
+  called at all. This matters once library search enforces a similarity floor.
+- **History, not overwrite.** `applyChallenge()` appends a challenge record
+  with the finding's before/after snapshot. New passages the challenge relied
+  on are appended to the review's evidence under the next free `E` ref, so
+  citations in older challenges stay valid.
+- **Consequences are explicit.** A changed conclusion clears the old
+  disposition and deletes its context record, since that decision applied to
+  the previous claim, and re-runs the readiness guards. Each consequence is
+  recorded in `adjustments`.
+- **No lost updates.** The router computes the challenge against a snapshot of
+  the review. The Workspace DO stores it only if the review's `updatedAt`
+  still matches, and otherwise returns `409` so the caller retries.
+
+### Findings as project records
+
+Accepting a finding with `recordAs` saves it as a `finding`, `decision`,
+`risk`, `assumption`, or `follow-up` context record with chunk-level
+provenance and an `origin` link to its review. These kinds share the existing
+context-record storage and source-deletion invalidation. The UI lists them
+under **Project records**, independent of any chat.
+
+Not yet implemented: review types beyond architecture changes, and owner/date
+fields on the review input.
 
 ## Output Board Philosophy
 
