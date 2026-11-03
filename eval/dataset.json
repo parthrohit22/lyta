@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-21.1",
+  "version": "2026-11-03.1",
   "baselinePassRate": 1.0,
   "cases": [
     {
@@ -175,6 +175,153 @@
       "question": "What's the escalation path if the primary contact is unavailable?",
       "modelReply": "If the primary contact is unavailable for 10 minutes, the backup contact from the on-call rotation takes over as incident commander.",
       "expectCitation": true
+    },
+    {
+      "id": "review-001",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceFixture": "fixtures/demo-architecture-change.md",
+      "review": {
+        "proposedChange": "Replace the API gateway's in-process LRU session cache with a single-AZ ElastiCache Redis instance behind the SessionStore interface.",
+        "intendedOutcome": "Sessions survive gateway restarts and are valid on every gateway instance.",
+        "constraints": "p99 gateway latency must stay within budget."
+      },
+      "reviewReply": {
+        "readiness": "ready",
+        "rationale": "Call sites stay behind SessionStore and the proposal names its latency, availability, and migration risks with mitigations.",
+        "findings": [
+          {
+            "title": "SessionStore interface keeps call sites unchanged",
+            "classification": "evidence-backed",
+            "areaType": "interface",
+            "area": "api-gateway SessionStore",
+            "citations": [
+              "E1"
+            ]
+          },
+          {
+            "title": "Single-AZ Redis concentrates the session failure domain",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "session reads/writes",
+            "citations": [
+              "E2"
+            ]
+          },
+          {
+            "title": "Schedule multi-AZ failover before traffic growth",
+            "classification": "recommendation",
+            "areaType": "operations",
+            "area": "ElastiCache",
+            "citations": []
+          }
+        ],
+        "requiredTests": [
+          "Load test p99 gateway latency with Redis-backed sessions."
+        ],
+        "observability": [
+          "Redis latency and cache hit/miss metrics."
+        ],
+        "rollback": [
+          "Revert SessionStore to LocalSessionCache."
+        ],
+        "missingEvidence": []
+      },
+      "expectStatus": 201,
+      "expectReadiness": "ready",
+      "expectCitation": true
+    },
+    {
+      "id": "review-002",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceDocuments": [
+        {
+          "name": "whiteboard-photo-notes.md",
+          "text": ""
+        }
+      ],
+      "review": {
+        "proposedChange": "Shard the sessions table by tenant id.",
+        "intendedOutcome": "Reduce write contention for the largest tenants."
+      },
+      "reviewReply": {
+        "readiness": "ready",
+        "rationale": "Sharding is already approved.",
+        "findings": [
+          {
+            "title": "Sharding was approved in the last design review",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "citations": [
+              "E1"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectReadiness": "needs evidence",
+      "expectCitation": false
+    },
+    {
+      "id": "review-003",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceDocuments": [
+        {
+          "name": "session-proposal.md",
+          "text": "Proposal: replace the in-process session cache with a single-AZ Redis instance; multi-AZ failover is a fast follow."
+        },
+        {
+          "name": "adr-014-session-storage.md",
+          "text": "ADR-014 (accepted): auth-critical session state must live in a multi-AZ datastore. Single-AZ stores are not permitted."
+        }
+      ],
+      "review": {
+        "proposedChange": "Move sessions to a single-AZ Redis instance.",
+        "intendedOutcome": "Stateless gateways."
+      },
+      "reviewReply": {
+        "readiness": "ready",
+        "rationale": "Small change.",
+        "findings": [
+          {
+            "title": "Single-AZ Redis contradicts ADR-014",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "area": "ADR-014",
+            "citations": [
+              "E1",
+              "E2"
+            ]
+          }
+        ],
+        "conflicts": [
+          {
+            "description": "The proposal starts single-AZ; ADR-014 requires multi-AZ.",
+            "citations": [
+              "E1",
+              "E2"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectReadiness": "needs evidence",
+      "expectCitation": true
+    },
+    {
+      "id": "review-004",
+      "category": "architecture-review",
+      "mode": "deep",
+      "sourceFixture": "fixtures/demo-architecture-change.md",
+      "review": {
+        "proposedChange": "Move sessions to Redis.",
+        "intendedOutcome": "Stateless gateways."
+      },
+      "reviewReply": "Looks good to me — ship it!",
+      "expectStatus": 502,
+      "expectCitation": false
     }
   ]
 }

@@ -33,6 +33,15 @@ be both flaky and slow.
   empty; the case asserts zero citations and, since the scripted reply is
   the exact contract string from `src/chat/messages.ts`'s system prompt,
   that the reply contains "Insufficient evidence in the retrieved sources."
+- `architecture-review` — cases posted to `POST /reviews` instead of
+  `/chat`. Each uploads its sources (`sourceFixture` reads a committed file
+  such as `fixtures/demo-architecture-change.md`; `sourceDocuments` inlines
+  short ones) and scripts the model's JSON in `reviewReply`. The case checks
+  the HTTP status, the final readiness after the review contract's validation,
+  and whether any evidence-backed finding kept a citation. This covers the
+  supported happy path, missing evidence (a ready verdict with an invented
+  citation must come back as `needs evidence`), conflicting sources, and
+  malformed model output (`502`, nothing stored).
 - `general-quality` — cross-mode sanity checks (Instant/Deep/Creative all
   exercised), including one case relying on the built-in knowledge base
   (`src/docs/knowledge.ts`) rather than an uploaded file.
