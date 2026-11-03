@@ -17,16 +17,22 @@ import { recordOperation } from "./utils/telemetry"
 import { callWithPolicy } from "./services/ai"
 import { getModelProfile } from "./config/modelProfiles"
 import {
+  REVIEW_CHALLENGE_POLICY_VERSION,
   REVIEW_CONTEXT_POLICY_VERSION,
+  insufficientChallengeResult,
+  mergeChallengeEvidence,
+  normalizeChallengeReason,
   normalizeDisposition,
   normalizeDispositionNote,
+  parseChallengeOutput,
   parseReviewOutput,
   toReviewEvidence,
   validateReviewInput,
   type ArchitectureReview,
+  type ChallengeResult,
   type ReviewSource
 } from "./review/contract"
-import { buildReviewMessages, buildReviewQuery } from "./review/prompt"
+import { buildChallengeMessages, buildChallengeQuery, buildReviewMessages, buildReviewQuery } from "./review/prompt"
 import { renderReviewBrief } from "./review/brief"
 
 interface AuthUser {
@@ -99,7 +105,10 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
   const limitCategory =
     url.pathname === "/library/import"
       ? "ingestion"
-      : url.pathname === "/chat" || url.pathname === "/chat/stream" || (url.pathname === "/reviews" && request.method === "POST")
+      : url.pathname === "/chat" ||
+          url.pathname === "/chat/stream" ||
+          (request.method === "POST" &&
+            (url.pathname === "/reviews" || /^\/reviews\/[^/]+\/findings\/[^/]+\/challenge$/.test(url.pathname)))
         ? "chat-requests"
         : ""
 
@@ -324,13 +333,19 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
     return finalizePrincipalResponse(await handleCreateReview(request, env, workspace, principal), principal)
   }
 
-  const reviewRoute = url.pathname.match(/^\/reviews\/([A-Za-z0-9_-]{1,120})(?:\/(export)|\/findings\/([A-Za-z0-9_-]{1,20}))?$/)
+  const reviewRoute = url.pathname.match(
+    /^\/reviews\/([A-Za-z0-9_-]{1,120})(?:\/(export)|\/findings\/([A-Za-z0-9_-]{1,20})(\/challenge)?)?$/
+  )
 
   if (reviewRoute) {
-    const [, reviewId, exportSegment, findingId] = reviewRoute
+    const [, reviewId, exportSegment, findingId, challengeSegment] = reviewRoute
 
-    if (findingId && request.method === "POST") {
-      const body = await safeJson<{ disposition?: string; note?: string }>(request)
+    if (findingId && challengeSegment && request.method === "POST") {
+      return finalizePrincipalResponse(await handleChallengeFinding(request, env, workspace, principal, reviewId, findingId), principal)
+    }
+
+    if (findingId && !challengeSegment && request.method === "POST") {
+      const body = await safeJson<{ disposition?: string; note?: string; recordAs?: string }>(request)
       const disposition = normalizeDisposition(body?.disposition)
 
       if (!disposition) {
@@ -341,7 +356,13 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
         await forwardWorkspace(workspace, "/reviews/disposition", {
           method: "POST",
           headers: JSON_HEADERS,
-          body: JSON.stringify({ id: reviewId, findingId, disposition, note: normalizeDispositionNote(body?.note) })
+          body: JSON.stringify({
+            id: reviewId,
+            findingId,
+            disposition,
+            note: normalizeDispositionNote(body?.note),
+            recordAs: body?.recordAs
+          })
         }),
         principal
       )
@@ -634,6 +655,143 @@ async function handleCreateReview(request: Request, env: Env, workspace: Durable
   }
 
   return noStoreJson(await saved.json(), { requestId }, { "X-Lyta-Request-Id": requestId }, 201)
+}
+
+/**
+ * "Challenge this conclusion": search the review's own sources for evidence
+ * against one finding, validate the model's verdict with the review contract,
+ * and append it to the finding's challenge history. The finding only changes
+ * when the reply cites retrieved counter-evidence; with nothing retrieved the
+ * model is not called and the challenge is recorded as insufficient evidence.
+ */
+async function handleChallengeFinding(
+  request: Request,
+  env: Env,
+  workspace: DurableObjectStub,
+  principal: Principal,
+  reviewId: string,
+  findingId: string
+) {
+  const requestId = crypto.randomUUID()
+  const reason = normalizeChallengeReason((await safeJson<{ reason?: string }>(request))?.reason)
+  const requestMetadata = {
+    requestId,
+    route: "/reviews/challenge",
+    principalType: principal.user.isGuest ? "guest" : "account",
+    workspacePrefix: scopedPrefix(principal.workspaceKey)
+  }
+  const challengeError = (error: string, status: number) =>
+    noStoreJson({ error, requestId }, undefined, { "X-Lyta-Request-Id": requestId }, status)
+
+  const stored = await workspace.fetch("https://internal/reviews/get", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ id: reviewId })
+  })
+
+  if (!stored.ok) {
+    return copyResponse(stored)
+  }
+
+  const { review } = (await stored.json()) as { review: ArchitectureReview }
+  const finding = review.findings.find((candidate) => candidate.id === findingId)
+
+  if (!finding) {
+    return challengeError("Finding not found.", 404)
+  }
+
+  if (finding.withdrawn) {
+    return challengeError("This finding was already withdrawn after a challenge.", 409)
+  }
+
+  const tokenLimited = await enforceLimit(env, "chat-tokens", principal.workspaceKey, {
+    limit: principal.user.isGuest ? 40_000 : 240_000,
+    windowMs: 60 * 60_000,
+    cost: Math.max(1, Math.ceil((finding.title.length + finding.detail.length + reason.length) / 4))
+  })
+  if (tokenLimited) return tokenLimited
+
+  const retrieval = await searchWorkspaceLibrary(
+    env,
+    workspace,
+    { message: buildChallengeQuery(finding, reason), mode: "deep", attachments: [] },
+    requestMetadata,
+    {
+      sourceFileIds: review.sources.map((source) => source.fileId),
+      topK: REVIEW_EVIDENCE_TOP_K,
+      policyVersion: REVIEW_CHALLENGE_POLICY_VERSION
+    }
+  )
+
+  if (retrieval.failed) {
+    return challengeError("Unable to search the review's sources. Please retry.", 502)
+  }
+
+  if (!retrieval.selectedSources.length) {
+    return challengeError("None of this review's sources are still in the library, so the finding cannot be challenged.", 409)
+  }
+
+  const { evidence, added } = mergeChallengeEvidence(review.evidence, retrieval.citations)
+  let result: ChallengeResult
+
+  if (!evidence.length) {
+    result = insufficientChallengeResult()
+  } else {
+    const profile = getModelProfile("deep")
+    let modelReply: unknown
+
+    try {
+      const reply = await callWithPolicy("ai.review.challenge", profile, (model) =>
+        env.AI.run(model, {
+          messages: buildChallengeMessages(review, finding, reason, evidence),
+          temperature: profile.temperature,
+          top_p: profile.top_p,
+          max_tokens: profile.max_tokens
+        })
+      )
+      modelReply = reply && typeof reply === "object" ? (reply as { response?: unknown }).response : undefined
+    } catch (error) {
+      logServerError("router.review.challenge.model", error, requestMetadata)
+      return challengeError("The review model is unavailable right now. Please retry.", 502)
+    }
+
+    const parsed = parseChallengeOutput(modelReply, evidence, finding)
+
+    if (!parsed.ok) {
+      logServerError("router.review.challenge.output", new Error(parsed.error), requestMetadata)
+      return challengeError(`${parsed.error} The finding was not changed; please retry.`, 502)
+    }
+
+    result = parsed.value
+  }
+
+  if (retrieval.unavailableSourceFileIds.length) {
+    result.adjustments.push(
+      `${retrieval.unavailableSourceFileIds.length} of the review's sources were deleted and could not be searched for counter-evidence.`
+    )
+  }
+
+  // Keep only newly retrieved passages the challenge actually relied on.
+  const relied = new Set([...result.counterEvidenceIds, ...(result.revised?.citationIds || [])])
+  const saved = await workspace.fetch("https://internal/reviews/challenge", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      id: review.id,
+      findingId,
+      expectedUpdatedAt: review.updatedAt,
+      requestId,
+      reason,
+      result,
+      addedEvidence: added.filter((item) => relied.has(item.chunkId))
+    })
+  })
+
+  if (!saved.ok) {
+    return saved.status === 409 ? copyResponse(saved) : challengeError("Unable to save the challenge right now.", 502)
+  }
+
+  return noStoreJson(await saved.json(), { requestId }, { "X-Lyta-Request-Id": requestId })
 }
 
 async function handleAuth(request: Request, env: Env, action: "register" | "login") {
