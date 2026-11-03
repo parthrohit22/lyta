@@ -41,7 +41,11 @@ be both flaky and slow.
   and whether any evidence-backed finding kept a citation. This covers the
   supported happy path, missing evidence (a ready verdict with an invented
   citation must come back as `needs evidence`), conflicting sources, and
-  malformed model output (`502`, nothing stored).
+  malformed model output (`502`, nothing stored). A case may add a
+  `challenge` step: the scripted challenge reply runs against the created
+  review, and the case checks the challenge outcome and whether the
+  conclusion changed (including a "withdrawn" verdict with invented
+  counter-evidence that must come back as `insufficient evidence`).
 - `general-quality` — cross-mode sanity checks (Instant/Deep/Creative all
   exercised), including one case relying on the built-in knowledge base
   (`src/docs/knowledge.ts`) rather than an uploaded file.
