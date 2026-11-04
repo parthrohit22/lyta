@@ -7,6 +7,8 @@ what to watch for). Sessions 7–10 at the end are the review-flow usability
 passes for the workspace layout: at-a-glance comprehension, keyboard only,
 mobile, and screen reader. The tokens and components they exercise are
 documented in [`docs/design/design-system.md`](../design/design-system.md).
+The [Drift check](#drift-check) section scripts the second workflow, drift
+detection across a specification, a design, and code.
 
 The workspace opens on **Review**. The brief is in the centre, **Source
 evidence** is on the right, and reviews, records and files are in the sidebar.
@@ -201,6 +203,83 @@ Use VoiceOver (macOS/iOS) or NVDA (Windows).
 it. Buttons, toggles and fields are read with meaningful names and states
 ("pressed", "busy").
 
+## Drift check
+
+A 6-minute script for the second workflow: **assign roles → run → inspect →
+change a source → re-run → decide**. It uses the fictional **Lanternfish
+Bookmarks** set in [`fixtures/drift/`](../../fixtures/drift/). Lanternfish is
+invented and describes no real system:
+
+| File | Role | What it says |
+| --- | --- | --- |
+| `lanternfish-prd.md` | Specification / PRD | REQ-1 CSV export, REQ-2 30-minute idle sessions, REQ-3 120 requests/minute, REQ-4 7-day trash |
+| `lanternfish-architecture.md` | Architecture / design | Gateway (30 min TTL), SyncService, SearchIndexer, TrashService |
+| `v1/lanternfish-code-export.md` | Implementation evidence | `SESSION_TTL_SECONDS = 86400`, `RATE_LIMIT_PER_MIN = 120`, no indexer, no export |
+| `v2/lanternfish-code-export.md` | Implementation evidence (changed) | TTL fixed to 1800, indexer added, rate limit now 60 |
+
+The files are deliberately compact: the model sees the first 260 characters of
+each retrieved passage, so each file keeps its facts at the top.
+
+### D1. Assign roles and run (2 min)
+
+1. Upload the PRD, the architecture note, and the **v1** code export.
+2. Click **Check drift** (under **Review a change**). Enter a scope such as
+   "Lanternfish sessions, API limits, search, export, and trash."
+3. Under **Sources and roles**, set each file's role. The summary line counts
+   files per role. Leave all four rules checked and click **Run drift check**.
+
+**Expect:** a run view with the summary, **Run 1**, three **New** badges, the
+**Sources compared** table (role, file, short version id, import time), and
+**Evidence coverage** per role. Typical findings: D1 CSV export, D2
+SearchIndexer, D3 session TTL.
+
+**Observe:** does the participant understand that a file can only have one
+role? Do they read the coverage note before judging a "not found" finding?
+
+### D2. Inspect a finding (1 min)
+
+1. Select the D1 **CSV export** finding.
+2. In **Source evidence**, read the claim and its PRD passage, then the
+   **Counterpart**. It reads **Not found in the supplied evidence** and names the
+   architecture and code files that were searched. Confidence is at most medium.
+3. Select the D3 **session TTL** finding. Its counterpart is **Conflicting
+   evidence**, with the code passage cited beside the PRD passage.
+
+**Pass:** the participant can say that LYTA did not find CSV export in the
+files it was given, not that the product lacks it.
+
+### D3. Change a source and re-run (2 min)
+
+1. Upload `v2/lanternfish-code-export.md`. It has the same name as v1.
+2. Click **Re-run with changed sources**. The scope and rules are locked, so
+   findings stay comparable. Both code exports are listed with their import
+   times; set the **newest** to Implementation evidence and the older one to
+   **Not compared**, then re-run.
+3. Read **Changes since run 1**: 1 new (API rate limit), 1 unchanged (CSV
+   export), 2 resolved (SearchIndexer, session TTL). **Resolved since the
+   previous run** says that is not proof the drift was fixed.
+4. Click **Run 1** under **Run history**. It reads back exactly as before.
+
+**Variant (stale source):** re-run while keeping the **older** export selected.
+A D4 finding reports that `lanternfish-code-export.md` has a newer version in
+the library.
+
+### D4. Decide and export (1 min)
+
+1. On the API rate limit finding, type a note and choose **Accepted
+   deviation**. The status line and screen reader announce that it is kept for
+   later runs.
+2. Re-run again with the same sources. The finding is **Unchanged** and still
+   shows **Accepted deviation**.
+3. Click **Export report**. The Markdown has the sources and versions, the
+   coverage, the diff, every finding's claim, counterpart, evidence links,
+   confidence, and disposition.
+
+**Keyboard and screen reader:** each role picker is announced as "Role for
+<file name>", finding rows are pressed toggles that control the evidence panel,
+the disposition buttons are a named group, and a finished run is announced as
+"Drift run N ready: … new, … unchanged, … resolved".
+
 ## Usability metrics to record
 
 | Measure | Target |
@@ -226,3 +305,7 @@ it. Buttons, toggles and fields are read with meaningful names and states
 - [ ] A finding was saved as a decision or risk and appeared in Project records
 - [ ] Export contained classifications, sources, challenge history, and the final verdict
 - [ ] Keyboard-only, mobile, and screen-reader passes (8–10) completed
+- [ ] Drift run 1 listed every source with its version and import time
+- [ ] A "not found in the supplied evidence" finding named the files it searched
+- [ ] The re-run showed new, unchanged, and resolved findings, and run 1 was unchanged
+- [ ] A disposition set on one run was shown on the next

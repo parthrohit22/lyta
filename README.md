@@ -12,7 +12,7 @@
 
 <p align="center">
   <b>Edge-native AI workspace for technical work.</b><br/>
-  Architecture change review · Source evidence for every claim · Decision records · Reusable file memory · Streaming chat
+  Architecture change review · Drift detection · Source evidence for every claim · Decision records · Reusable file memory · Streaming chat
 </p>
 
 <p align="center">
@@ -30,6 +30,7 @@ The current product experience is intentionally minimal. The interface focuses o
 
 - **Review workspace**: the review brief is the centre panel, the selected claim's exact source passage (file, version, passage id, retrieval rank and policy, evidence state) sits beside it, and reviews, decision/risk/assumption/follow-up records, and files live in the sidebar. Chat is one switch away. Built on a documented design system ([`docs/design/design-system.md`](docs/design/design-system.md)) with automated contrast, label, focus, and live-region checks.
 - **Architecture Change Review**: paste a proposed technical change, pick the library files to check it against, and get a structured review brief instead of a chat reply — a `ready` / `needs evidence` / `blocked` verdict with rationale, findings classified as evidence-backed, inference, recommendation, or insufficient evidence, source excerpts for every citation, per-finding accept/reject/unresolved dispositions, and a Markdown export.
+- **Drift detection**: click **Check drift**, give each library file one role (specification/PRD, architecture/design, or implementation evidence), and LYTA checks four documented drift rules: a requirement with no supporting architecture or code passage, an architecture component with no implementation passage, an interface or constraint contradiction cited on both sides, and stale or missing source evidence. Every run records the version and import date of each source it compared. Each finding shows the claim, the conflicting or missing counterpart, exact passage references, and a confidence; a missing counterpart is always "not found in the supplied evidence", never "does not exist in the project". Re-running shows new, unchanged, and resolved findings by stable key without rewriting earlier runs, and confirmed / accepted-deviation / false-positive / needs-investigation dispositions carry across runs.
 - Starts immediately in guest mode with temporary server-backed workspace state.
 - Supports account workspaces for persisted chats, files, profile data, and preferences.
 - Ingests PDFs, DOCX, TXT, Markdown, CSV, JSON, HTML, XML, and images.
@@ -65,7 +66,13 @@ The streaming path is hardened for demo reliability. `/chat/stream` establishes 
    excerpt, challenge a conclusion, save findings as decisions or risks (see **Project records**), then
    export the brief as Markdown. [`docs/demo/review-walkthrough.md`](docs/demo/review-walkthrough.md)
    is the full demo and usability script.
-8. Sign in to move from temporary guest state to a saved account workspace.
+8. Click **Check drift**, upload the three Lanternfish files from [`fixtures/drift/`](fixtures/drift/)
+   (a PRD, an architecture note, and the v1 code export), give each its role, and run the check.
+   Then upload the v2 code export (same file name), choose **Re-run with changed sources**, switch the
+   implementation role to the newer file, and compare: one finding unchanged, one new, two resolved.
+   Mark a finding as an accepted deviation and re-run again to see the disposition carried over.
+   The [drift section of the walkthrough](docs/demo/review-walkthrough.md#drift-check) has the full script.
+9. Sign in to move from temporary guest state to a saved account workspace.
 
 Prefer not to type your own material? [`fixtures/demo-architecture-change.md`](fixtures/demo-architecture-change.md)
 is a short, clearly-fictional sample change proposal you can upload in step 3 and review in step 7 —
@@ -144,6 +151,9 @@ More detail lives in [ARCHITECTURE.md](./ARCHITECTURE.md).
   contract, readiness verdicts, classified findings with citations, "challenge this conclusion"
   counter-evidence search with history, accepted findings saved as decision/risk/assumption/follow-up
   records, and Markdown brief export
+- Drift detection: three explicit source roles, per-role scoped retrieval, four bounded rules with a
+  strictly validated contract, deterministic stale/missing-source checks, run history with a stored
+  new/unchanged/resolved diff, dispositions kept by stable finding key, and Markdown export
 
 ### Known Tradeoffs
 
@@ -152,6 +162,9 @@ More detail lives in [ARCHITECTURE.md](./ARCHITECTURE.md).
 - Retrieval uses Durable Object state rather than a dedicated external vector database.
 - Browser-side extraction keeps the architecture compact but does not replace server-side OCR.
 - The output board is a focused Markdown capture pane, not a full artifact runtime.
+- Drift and review prompts see the first 260 characters of each retrieved passage (`src/library/chunks.ts`),
+  up to six passages per drift role. Long documents need focused scopes, which is why the drift fixtures
+  are compact registers.
 
 ## Project Structure
 
@@ -167,7 +180,11 @@ scripts/
 
 docs/
   design/design-system.md  Tokens, components, states, breakpoints, accessibility rules
-  demo/review-walkthrough.md  Demo and usability script for the review flow
+  demo/review-walkthrough.md  Demo and usability script for the review and drift flows
+
+fixtures/
+  demo-architecture-change.md  Fictional change proposal for the review demo
+  drift/                   Fictional Lanternfish PRD, architecture note, and v1/v2 code exports
 
 pages/
   index.html               Main UI shell
@@ -177,10 +194,13 @@ pages/
   app.js                   Client logic for auth, chat, uploads, board, settings
   app-review-core.js       Generated review helper bundle
   app-review.js            Review workspace: brief, evidence inspector, records, view switch
+  app-drift-core.js        Generated drift helper bundle
+  app-drift.js             Drift checks: role picker, run view with diff badges, dispositions
 
 pages-src/
   app-core.ts              TypeScript source for app-core.js
   app-review-core.ts       TypeScript source for app-review-core.js
+  app-drift-core.ts        TypeScript source for app-drift-core.js
 
 src/
   index.ts                 Worker entry point
@@ -196,6 +216,10 @@ src/
     contract.ts            Review input/output contract and strict output validation
     prompt.ts              JSON review prompt over untrusted, source-scoped evidence
     brief.ts               Markdown review brief export
+  drift/
+    contract.ts            Drift rules, input validation, strict output validation, run diffing
+    prompt.ts              JSON drift prompt over role-labelled, untrusted evidence
+    brief.ts               Markdown drift report export
   services/
     ai.ts                  Workers AI chat calls
     embeddings.ts          Embedding generation
@@ -252,7 +276,8 @@ http://localhost:8787
 `scripts/demo-preview.ts` serves `pages/` and runs the real router and
 Durable Objects against in-memory storage and a scripted model. `SEED=1`
 pre-builds a demo workspace (the fixture, a runbook, an ADR, a review, a
-challenge, and records). Nothing persists, and every model reply is canned.
+challenge, records, and a two-run Lanternfish drift check). Nothing persists,
+and every model reply is canned.
 
 ```bash
 npm run build:client
@@ -316,7 +341,9 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 | Full request pipeline | `tests/smoke/smoke.test.ts` |
 | Architecture Change Review (happy, missing-evidence, conflicting, inaccessible-source paths) | `tests/integration/architecture-review.test.ts`, `tests/unit/review-contract.test.ts` |
 | Review challenges and project records (changed, unchanged, insufficient counter-evidence) | `tests/integration/review-challenge.test.ts`, `tests/unit/review-contract.test.ts` |
-| Frontend accessibility (labels, names, id references, landmarks, live regions, focus, reduced motion, WCAG contrast for both themes, announcement and evidence-state text, no raw HTML in review UI) | `tests/unit/frontend-accessibility.test.ts` |
+| Drift detection (each rule, not found vs does not exist, stale/missing sources, re-run diffing, disposition persistence, unsupported comparison types, malformed output, source deletion) | `tests/integration/drift-detection.test.ts`, `tests/unit/drift-contract.test.ts` |
+| Drift rule precision and citation identity (scored per rule against `eval/dataset.json`) | `tests/integration/eval-suite.test.ts` |
+| Frontend accessibility (labels, names, id references, landmarks, live regions, focus, reduced motion, WCAG contrast for both themes, announcement and evidence-state text, no raw HTML in review or drift UI) | `tests/unit/frontend-accessibility.test.ts` |
 
 ## Model Configuration and Evaluation
 
@@ -432,6 +459,57 @@ challenge → export lives in [`docs/demo/review-walkthrough.md`](docs/demo/revi
 Deleting a cited source clears its excerpts from stored reviews (the brief then
 says the source was deleted) and invalidates accepted findings that depended
 on it.
+
+## Drift Detection
+
+Drift detection is the second review workflow. It reuses the review
+architecture (scoped retrieval, one `Deep` call through `callWithPolicy()`,
+strict output validation with recorded `adjustments`, Markdown export, and the
+same evidence inspector) with its own contract in `src/drift/contract.ts`.
+
+| Rule | Id | What it reports | Who decides | Highest confidence |
+| --- | --- | --- | --- | --- |
+| D1 | `requirement-without-support` | A requirement cited from the specification with no supporting architecture or implementation passage | Model, validated | medium |
+| D2 | `component-without-implementation` | A component cited from the architecture with no implementation passage | Model, validated | medium |
+| D3 | `interface-contradiction` | An interface, value, limit, or constraint two roles state differently, cited on both sides | Model, validated | high |
+| D4 | `stale-or-missing-source` | A role with no retrieved passage, or a selected source superseded by a newer same-name library file | Server, deterministic | high |
+
+- `POST /drift` takes `comparisonType` (only `spec-architecture-implementation`
+  is supported), a `scope`, `sources` mapping each role to 1–6 library file ids
+  (a file can have only one role), and optional `rules`. An unsupported
+  comparison type, role, or rule is refused with `400` and a message listing
+  what is supported. Retrieval runs per role, specification first, and each
+  retrieval writes a context manifest under policy `2026-11-04.drift.<role>`.
+- Every run stores each source's role, file, `sourceVersionId`, and import date.
+- Validation: citations not in the retrieved set are dropped; a D1 claim must
+  cite a specification passage and a D2 claim an architecture passage, or the
+  finding is dropped; a D3 contradiction needs both sides cited from two
+  different roles; model-proposed D4 findings and unselected rules are dropped;
+  an unknown rule or confidence is malformed (`502`, nothing saved).
+- Absence is never presented as a fact about the project. For D1 and D2 the
+  counterpart text is always written by the server and says what was searched
+  ("Not found in the supplied evidence. LYTA searched N passages from …"). Model
+  wording that claims something "does not exist" or "is not implemented" is
+  removed and the removal recorded; a claim worded that way is dropped.
+  Absence findings are capped at `medium` confidence, and drop to `low` when a
+  searched role returned nothing or the model cited the counterpart it called
+  missing. With no specification or architecture passage at all, the model is
+  not called and only D4 runs.
+- `POST /drift/:id/runs` re-runs a comparison with the same scope and rules and
+  new or unchanged `sources`. Each run is written once under its own key; the
+  diff against the previous run (`new`, `unchanged`, `resolved` by stable
+  `rule:subject` key) is stored on the new run only, so earlier runs read back
+  exactly as saved. "Resolved" means the previous run reported it and this one
+  did not, which the UI and export say is not proof of a fix.
+- `POST /drift/:id/dispositions` with `{ runId, findingKey, disposition, note? }`
+  records `confirmed`, `accepted-deviation`, `false-positive`,
+  `needs-investigation`, or `undecided` on the comparison by key, with history,
+  so every later run shows it.
+- `GET /drift`, `GET /drift/:id` (latest run), `GET /drift/:id/runs/:runId`, and
+  `GET /drift/:id/runs/:runId/export` (Markdown report).
+
+Deleting a source clears its excerpts from stored drift runs, as for reviews;
+finding text and citation ids stay so the run history remains auditable.
 
 ## Roadmap Ideas
 
