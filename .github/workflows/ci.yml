@@ -78,9 +78,11 @@ jobs:
           node --check pages/app-attachments.js
           node --check pages/app-review-core.js
           node --check pages/app-review.js
+          node --check pages/app-drift-core.js
+          node --check pages/app-drift.js
 
       - name: Confirm generated client bundle is committed
-        run: git diff --exit-code -- pages/app-core.js pages/app-review-core.js
+        run: git diff --exit-code -- pages/app-core.js pages/app-review-core.js pages/app-drift-core.js
 
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high

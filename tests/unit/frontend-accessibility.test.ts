@@ -12,6 +12,7 @@ import vm from "node:vm"
 const html = readFileSync(new URL("../../pages/index.html", import.meta.url), "utf8")
 const css = readFileSync(new URL("../../pages/styles.css", import.meta.url), "utf8")
 const reviewScript = readFileSync(new URL("../../pages/app-review.js", import.meta.url), "utf8")
+const driftScript = readFileSync(new URL("../../pages/app-drift.js", import.meta.url), "utf8")
 
 const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1])
 
@@ -82,8 +83,34 @@ test("the shell has landmarks, a working skip link, and live regions for streami
   assert.match(html, /data-view="review" aria-pressed="true"/)
 })
 
-test("review UI never inserts markup from strings", () => {
+test("review and drift UI never insert markup from strings", () => {
   assert.doesNotMatch(reviewScript, /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write/)
+  assert.doesNotMatch(driftScript, /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write/)
+})
+
+test("Check drift sits next to Review a change and its form is labelled and announced", () => {
+  const openReview = html.indexOf('id="openReview"')
+  const openDrift = html.indexOf('id="openDrift"')
+  assert.ok(openReview > 0 && openDrift > openReview && openDrift < html.indexOf('id="openRecords"'), "Check drift follows Review a change")
+  assert.match(html, /<button id="openDrift"[^>]*aria-label="Check drift"/)
+  assert.match(html, /<section class="sidebar-section" aria-labelledby="sidebarDriftTitle">/)
+  assert.match(html, /<div id="driftStartView" class="review-view" hidden>/)
+  assert.match(html, /<div id="driftRunView" class="review-view" hidden>/)
+  assert.match(html, /<fieldset class="review-sources">\s*<legend>Sources and roles<\/legend>/)
+  assert.match(html, /<fieldset class="review-sources" id="driftRules">\s*<legend>Drift rules<\/legend>/)
+  assert.match(html, /id="driftRoleSummary"[^>]*aria-live="polite"/)
+  assert.equal((html.match(/name="driftRule"/g) || []).length, 4, "the four documented rules are offered")
+  assert.ok(
+    html.indexOf("/app-drift-core.js") < html.indexOf("/app-drift.js") && html.indexOf("/app-review.js") < html.indexOf("/app-drift.js")
+  )
+
+  // Role pickers are built at runtime, so check the script names them and announces results.
+  assert.match(driftScript, /select\.setAttribute\("aria-label", `Role for \$\{file\.name\}`\)/)
+  assert.match(driftScript, /button\.setAttribute\("aria-controls", "evidencePanel"\)/)
+  assert.match(driftScript, /group\.setAttribute\("role", "group"\)/)
+  assert.match(driftScript, /announce\(buildRunAnnouncement\(run\)\)/)
+  assert.match(driftScript, /announce\(`Drift check failed\. \$\{message\}`, "assertive"\)/)
+  assert.match(driftScript, /cell\.scope = "col"/, "the sources table has column headers")
 })
 
 /* ---------------------------------------------------------------------- */
@@ -210,7 +237,7 @@ for (const [theme, pattern] of [
 }
 
 test("form controls draw their boundary with the 3:1 border token", () => {
-  for (const selector of [".settings-field input", ".settings-field textarea", ".settings-field select,"]) {
+  for (const selector of [".settings-field input", ".settings-field textarea", ".settings-field select,", ".drift-role-row select"]) {
     const index = css.indexOf(`${selector}`)
     assert.ok(index >= 0, `${selector} is styled`)
     assert.match(css.slice(index, css.indexOf("}", index)), /border:1px solid var\(--border-strong\)/, `${selector} uses --border-strong`)
@@ -300,4 +327,73 @@ test("selecting a claim describes its evidence state and retrieval context truth
     { ...(core.countRecordsByKind([{ kind: "risk" }, { kind: "risk" }, { kind: "decision" }]) as object) },
     { risk: 2, decision: 1 }
   )
+})
+
+function loadDriftCore() {
+  const context = { window: {} as { LytaDrift?: Record<string, (...args: unknown[]) => unknown> } }
+  vm.runInNewContext(readFileSync(new URL("../../pages/app-drift-core.js", import.meta.url), "utf8"), context)
+  return context.window.LytaDrift!
+}
+
+const sampleDriftRun = {
+  id: "drift-run_2",
+  number: 2,
+  rules: ["requirement-without-support", "interface-contradiction", "not-a-rule"],
+  findings: [
+    {
+      key: "requirement-without-support:csv-export",
+      id: "D1-1",
+      rule: "requirement-without-support",
+      subject: "CSV export",
+      claim: "REQ-1 requires CSV export.",
+      counterpart: { kind: "not-found-in-supplied-evidence", searchedSources: ["architecture.md", "code.md"], description: "Not found." },
+      confidence: "medium",
+      diffStatus: "unchanged"
+    },
+    {
+      key: "interface-contradiction:ttl",
+      id: "D3-1",
+      rule: "interface-contradiction",
+      subject: "TTL",
+      counterpart: { kind: "surely-cited" },
+      confidence: "certain"
+    },
+    { key: "made-up:rule", rule: "vibes", subject: "Unknown" }
+  ],
+  diff: {
+    previousRunNumber: 1,
+    resolved: [{ key: "component-without-implementation:indexer", rule: "component-without-implementation", subject: "Indexer" }]
+  }
+}
+
+test("drift results are announced with their diff, and absence is never described as absence from the project", () => {
+  const core = loadDriftCore()
+  const run = core.normalizeRun(sampleDriftRun) as {
+    rules: string[]
+    findings: Array<{ id: string; subject: string; confidence: string; counterpart: { kind: string } }>
+  }
+
+  assert.deepEqual(run.rules, ["requirement-without-support", "interface-contradiction"])
+  assert.equal(run.findings.length, 2, "a finding with an unknown rule is not shown")
+  assert.equal(run.findings[1].counterpart.kind, "not-found-in-supplied-evidence", "an unknown counterpart kind is never shown as cited")
+  assert.equal(run.findings[1].confidence, "low", "an unknown confidence is shown as low")
+  assert.equal(core.buildRunAnnouncement(run), "Drift run 2 ready: 2 findings. 1 new, 1 unchanged, 1 resolved since the previous run.")
+  assert.equal(
+    core.buildDispositionAnnouncement(run.findings[0], "accepted-deviation"),
+    "D1-1 CSV export: marked accepted deviation. Kept for later runs."
+  )
+
+  const absence = core.describeCounterpart(run.findings[0]) as { state: string; label: string; description: string }
+  assert.equal(absence.label, "Not found in the supplied evidence")
+  assert.equal(absence.state, "not-found")
+  assert.match(absence.description, /from architecture\.md, code\.md supports it\. That does not show it is absent from the project\./)
+  assert.doesNotMatch(absence.description, /does not exist|not implemented/)
+
+  const selection = core.buildSelection([
+    { fileId: "a", role: "specification" },
+    { fileId: "b", role: "architecture" },
+    { fileId: "c", role: "" }
+  ]) as { error: string }
+  assert.equal(selection.error, "Choose at least one source for Implementation evidence.")
+  assert.equal(core.runPath("drift 1", "run/2", "export"), "/drift/drift%201/runs/run%2F2/export")
 })
