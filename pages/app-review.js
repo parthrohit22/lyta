@@ -101,7 +101,9 @@
     lastPayload: null,
     pendingPrefill: null,
     evidenceReturnFocus: null,
-    releaseEvidenceFocus: null
+    releaseEvidenceFocus: null,
+    // Centre views owned by other workflows (drift checks), by centre name.
+    extraCentres: new Map()
   }
 
   /* ------------------------------------------------------------------ */
@@ -167,6 +169,37 @@
   setView(readStoredView())
   showStart()
 
+  // The seam other review-workspace workflows build on (pages/app-drift.js):
+  // they register a centre view, and this module keeps owning the panel, the
+  // evidence inspector, the mobile sheet, and the shared DOM builders.
+  window.LytaWorkspaceUi = {
+    dom,
+    registerCentre(name, { element, renderEvidence: render }) {
+      state.extraCentres.set(name, { element, renderEvidence: render })
+      element.hidden = state.centre !== name
+    },
+    setCentre,
+    setView,
+    closeSidebarIfMobile,
+    openLibraryPicker,
+    openEvidenceSheet,
+    renderEvidence: () => renderEvidence(),
+    getDocuments: () => state.documents,
+    isRunning: () => state.running,
+    builders: {
+      appendMeta,
+      createButton,
+      createCallout,
+      createHeading,
+      createList,
+      createListNote,
+      createNote,
+      createParagraph,
+      renderListSection,
+      truncate
+    }
+  }
+
   /* ------------------------------------------------------------------ */
   /* views                                                               */
   /* ------------------------------------------------------------------ */
@@ -205,13 +238,17 @@
     dom.startView.hidden = centre !== "start"
     dom.briefView.hidden = centre !== "brief"
     dom.recordsView.hidden = centre !== "records"
-    dom.newReview.hidden = centre === "start"
+    state.extraCentres.forEach((entry, name) => {
+      entry.element.hidden = name !== centre
+    })
+    dom.newReview.hidden = centre === "start" || state.extraCentres.has(centre)
     dom.rerun.hidden = centre !== "brief" || !state.review
     dom.exportButton.hidden = centre !== "brief" || !state.review
     dom.panelTitle.textContent = title
     dom.panelEyebrow.textContent = eyebrow
     setStatusState(dom.status, "")
     renderSidebarReviews()
+    document.dispatchEvent(new CustomEvent("lyta:centre-changed", { detail: { centre } }))
   }
 
   function showStart(prefill = null) {
@@ -390,6 +427,7 @@
     }
 
     renderSourceOptions()
+    document.dispatchEvent(new CustomEvent("lyta:sources-loaded"))
   }
 
   function renderSourceOptions() {
@@ -679,6 +717,12 @@
   /* ------------------------------------------------------------------ */
 
   function renderEvidence() {
+    const extra = state.extraCentres.get(state.centre)
+    if (extra) {
+      extra.renderEvidence()
+      return
+    }
+
     const review = state.centre === "brief" ? state.review : null
     const finding = review?.findings.find(candidate => candidate.id === state.selectedFindingId)
 

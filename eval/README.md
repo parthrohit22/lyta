@@ -46,6 +46,20 @@ be both flaky and slow.
   review, and the case checks the challenge outcome and whether the
   conclusion changed (including a "withdrawn" verdict with invented
   counter-evidence that must come back as `insufficient evidence`).
+- `drift-detection` — cases posted to `POST /drift`. Each role lists its
+  documents (committed fixtures from `fixtures/drift/`, or inline text), and
+  `driftReply` scripts the model's JSON, including findings the contract must
+  drop (wrong-role citations, same-role contradictions, invented refs,
+  project-level absence wording). `expectFindings` is the exact set of finding
+  keys that must survive, with the source files each side must cite, the
+  counterpart kind, and optionally the confidence. A case may add a `rerun`
+  with changed sources and the expected new/unchanged/resolved diff. Across all
+  drift cases the suite scores **precision per rule** (reported findings that
+  were expected) and **citation identity** (citations that resolve to the
+  expected source file), and fails below `driftScoring`'s floors (both 1.0).
+  Every one of the four rules must have a scored fixture. A passage whose text
+  contains `NO-MATCH` gets an embedding of another dimension, which stands in
+  for a passage dropped by the retrieval similarity floor.
 - `general-quality` — cross-mode sanity checks (Instant/Deep/Creative all
   exercised), including one case relying on the built-in knowledge base
   (`src/docs/knowledge.ts`) rather than an uploaded file.

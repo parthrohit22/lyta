@@ -2,7 +2,7 @@
 // routes API calls through the real router and Durable Objects, backed by
 // in-memory storage and a scripted model (the same approach as the
 // integration tests). With SEED=1 it pre-builds a demo workspace (sources, a
-// review, a challenge, and records) and gives every cookieless visitor that
+// review, a challenge, records, and a two-run drift check) and gives every cookieless visitor that
 // workspace, which is how assets/demo.png is captured.
 //
 //   SEED=1 npx tsx scripts/demo-preview.ts        # http://localhost:8799
@@ -128,6 +128,65 @@ const revisedChallenge = {
 }
 const upheldChallenge = { outcome: "upheld", rationale: "No source contradicts this finding.", counterEvidence: ["E1"] }
 
+/** Drift replies cite whichever ref the prompt gave each Lanternfish passage, as a real model would. */
+function driftReply(prompt: string) {
+  const ref = (needle: string) =>
+    [...prompt.matchAll(/<lyta-source id=\\"(E\d+)\\"[^>]*>\\n([\s\S]*?)\\n<\/lyta-source>/g)].find(([, , body]) =>
+      body.includes(needle)
+    )?.[1] || "E0"
+  const csv = {
+    rule: "requirement-without-support",
+    subject: "CSV export",
+    claim: "REQ-1 requires exporting all bookmarks as CSV.",
+    detail: "Neither the architecture nor the code export passage mentions an export path.",
+    confidence: "medium",
+    claimCitations: [ref("REQ-1")]
+  }
+
+  if (prompt.includes("SESSION_TTL_SECONDS = 1800")) {
+    return {
+      summary: "CSV export still has no counterpart in the supplied evidence, and the API rate limit now contradicts the PRD.",
+      findings: [
+        csv,
+        {
+          rule: "interface-contradiction",
+          subject: "API rate limit",
+          claim: "The public API allows 120 requests/minute per user.",
+          counterpart: "gateway/limits.ts sets RATE_LIMIT_PER_MIN = 60.",
+          detail: "Clients built to the PRD would be throttled at half the documented rate.",
+          confidence: "high",
+          claimCitations: [ref("REQ-1")],
+          counterpartCitations: [ref("RATE_LIMIT_PER_MIN")]
+        }
+      ]
+    }
+  }
+
+  return {
+    summary: "The code export's session lifetime contradicts the PRD, and two items have no counterpart in the supplied evidence.",
+    findings: [
+      csv,
+      {
+        rule: "component-without-implementation",
+        subject: "SearchIndexer",
+        claim: "The architecture describes a SearchIndexer that indexes bookmark titles.",
+        confidence: "medium",
+        claimCitations: [ref("SearchIndexer")]
+      },
+      {
+        rule: "interface-contradiction",
+        subject: "session TTL",
+        claim: "Sessions expire after 30 minutes idle.",
+        counterpart: "gateway/session.ts sets SESSION_TTL_SECONDS = 86400 (24 hours).",
+        detail: "Sessions would live 48 times longer than the PRD allows.",
+        confidence: "high",
+        claimCitations: [ref("REQ-1")],
+        counterpartCitations: [ref("SESSION_TTL_SECONDS")]
+      }
+    ]
+  }
+}
+
 const env = {} as Env
 Object.assign(env, {
   AI: {
@@ -138,6 +197,7 @@ Object.assign(env, {
       if (String(input.messages?.[0]?.content).includes("challenging ONE finding")) {
         return { response: JSON.stringify(prompt.includes("ADR-014") ? revisedChallenge : upheldChallenge) }
       }
+      if (String(input.messages?.[0]?.content).includes("LYTA's drift check")) return { response: JSON.stringify(driftReply(prompt)) }
       if (prompt.includes("Architecture Change Review")) return { response: JSON.stringify(reviewReply) }
       return { response: "This is a scripted demo reply. Run `npm run dev` with a Workers AI binding for real answers." }
     }
@@ -204,6 +264,34 @@ async function seed() {
     content: "Platform team estimate; revisit if peak traffic grows more than 20%."
   })
   console.log(`[demo-preview] seeded review ${review.id}`)
+
+  // A drift check over the fictional Lanternfish set, re-run after the code export changes.
+  const importFixture = async (path: string) => {
+    const text = readFileSync(root(`fixtures/drift/${path}`), "utf8")
+    const imported = await call("/library/import", {
+      attachments: [{ kind: "document", name: path.split("/").pop(), mimeType: "text/markdown", size: text.length, extractedText: text }]
+    })
+    return imported.files[0].libraryFileId as string
+  }
+  const drift = {
+    specification: [await importFixture("lanternfish-prd.md")],
+    architecture: [await importFixture("lanternfish-architecture.md")],
+    implementation: [await importFixture("v1/lanternfish-code-export.md")]
+  }
+  const { comparison } = await call("/drift", {
+    comparisonType: "spec-architecture-implementation",
+    scope: "Lanternfish sessions, API limits, search, export, and trash.",
+    sources: drift
+  })
+  const v2 = await importFixture("v2/lanternfish-code-export.md")
+  const { run } = await call(`/drift/${comparison.id}/runs`, { sources: { ...drift, implementation: [v2] } })
+  await call(`/drift/${comparison.id}/dispositions`, {
+    runId: run.id,
+    findingKey: "requirement-without-support:csv-export",
+    disposition: "confirmed",
+    note: "Export is on the Q3 plan; no design yet."
+  })
+  console.log(`[demo-preview] seeded drift check ${comparison.id} (2 runs)`)
 }
 
 const CONTENT_TYPES: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".woff2": "font/woff2" }

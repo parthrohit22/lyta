@@ -34,6 +34,30 @@ import {
 } from "./review/contract"
 import { buildChallengeMessages, buildChallengeQuery, buildReviewMessages, buildReviewQuery } from "./review/prompt"
 import { renderReviewBrief } from "./review/brief"
+import {
+  DRIFT_COMPARISONS,
+  DRIFT_POLICY_VERSION,
+  DRIFT_RULE_DEFINITIONS,
+  MAX_DRIFT_RUNS,
+  buildDriftCoverage,
+  buildDriftQuery,
+  buildSourceCheckFindings,
+  finalizeDriftFindings,
+  normalizeDriftDisposition,
+  normalizeDriftNote,
+  parseDriftOutput,
+  toDriftEvidence,
+  validateDriftInput,
+  validateDriftSources,
+  type DriftComparison,
+  type DriftFinding,
+  type DriftInput,
+  type DriftRole,
+  type DriftRun,
+  type DriftSource
+} from "./drift/contract"
+import { buildDriftMessages } from "./drift/prompt"
+import { renderDriftBrief } from "./drift/brief"
 
 interface AuthUser {
   id: string
@@ -54,6 +78,7 @@ const JSON_HEADERS = {
 
 const CHAT_SERVER_ERROR = "LYTA server error. Please retry; request failed before streaming started."
 const REVIEW_EVIDENCE_TOP_K = 6
+const DRIFT_EVIDENCE_TOP_K = 6
 
 interface Principal {
   user: AuthUser
@@ -108,7 +133,10 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       : url.pathname === "/chat" ||
           url.pathname === "/chat/stream" ||
           (request.method === "POST" &&
-            (url.pathname === "/reviews" || /^\/reviews\/[^/]+\/findings\/[^/]+\/challenge$/.test(url.pathname)))
+            (url.pathname === "/reviews" ||
+              url.pathname === "/drift" ||
+              /^\/reviews\/[^/]+\/findings\/[^/]+\/challenge$/.test(url.pathname) ||
+              /^\/drift\/[^/]+\/runs$/.test(url.pathname)))
         ? "chat-requests"
         : ""
 
@@ -386,6 +414,82 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
           headers: {
             "Content-Type": "text/markdown; charset=utf-8",
             "Content-Disposition": `attachment; filename="lyta-review-${review.id}.md"`,
+            "Cache-Control": "no-store"
+          }
+        }),
+        principal
+      )
+    }
+
+    return finalizePrincipalResponse(new Response("Method Not Allowed", { status: 405 }), principal)
+  }
+
+  if (url.pathname === "/drift" && request.method === "GET") {
+    return finalizePrincipalResponse(await forwardWorkspace(workspace, "/drift"), principal)
+  }
+
+  if (url.pathname === "/drift" && request.method === "POST") {
+    return finalizePrincipalResponse(await handleDriftRun(request, env, workspace, principal, null), principal)
+  }
+
+  const driftRoute = url.pathname.match(
+    /^\/drift\/([A-Za-z0-9_-]{1,120})(?:\/(runs|dispositions)(?:\/([A-Za-z0-9_-]{1,120})(\/export)?)?)?$/
+  )
+
+  if (driftRoute) {
+    const [, comparisonId, collection, runId, exportSegment] = driftRoute
+
+    if (collection === "runs" && !runId && request.method === "POST") {
+      return finalizePrincipalResponse(await handleDriftRun(request, env, workspace, principal, comparisonId), principal)
+    }
+
+    if (collection === "dispositions" && !runId && request.method === "POST") {
+      const body = await safeJson<{ runId?: string; findingKey?: string; disposition?: string; note?: string }>(request)
+      const disposition = normalizeDriftDisposition(body?.disposition)
+
+      if (!disposition) {
+        return finalizePrincipalResponse(
+          new Response("disposition must be confirmed, accepted-deviation, false-positive, needs-investigation, or undecided", {
+            status: 400
+          }),
+          principal
+        )
+      }
+
+      return finalizePrincipalResponse(
+        await forwardWorkspace(workspace, "/drift/disposition", {
+          method: "POST",
+          headers: JSON_HEADERS,
+          body: JSON.stringify({
+            id: comparisonId,
+            runId: body?.runId,
+            findingKey: body?.findingKey,
+            disposition,
+            note: normalizeDriftNote(body?.note)
+          })
+        }),
+        principal
+      )
+    }
+
+    if ((!collection || (collection === "runs" && runId)) && request.method === "GET") {
+      const response = await workspace.fetch("https://internal/drift/get", {
+        method: "POST",
+        headers: JSON_HEADERS,
+        body: JSON.stringify({ id: comparisonId, runId: runId || url.searchParams.get("run") || undefined })
+      })
+
+      if (!response.ok || !exportSegment) {
+        return finalizePrincipalResponse(copyResponse(response), principal)
+      }
+
+      const { comparison, run } = (await response.json()) as { comparison: DriftComparison; run: DriftRun }
+
+      return finalizePrincipalResponse(
+        new Response(renderDriftBrief(comparison, run), {
+          headers: {
+            "Content-Type": "text/markdown; charset=utf-8",
+            "Content-Disposition": `attachment; filename="lyta-drift-${comparison.id}-run-${run.number}.md"`,
             "Cache-Control": "no-store"
           }
         }),
@@ -792,6 +896,214 @@ async function handleChallengeFinding(
   }
 
   return noStoreJson(await saved.json(), { requestId }, { "X-Lyta-Request-Id": requestId })
+}
+
+/**
+ * Drift check: resolve the user's role selection, retrieve evidence per role
+ * (specification first, so its passages help rank architecture and
+ * implementation counterparts), ask the `deep` profile for findings under the
+ * selected rules, validate them against the drift contract, add the
+ * deterministic source checks, and save the run. With `comparisonId` this is a
+ * re-run: scope and rules stay fixed, sources default to the last run's, and
+ * the stored diff compares the new run with the previous one by finding key.
+ */
+async function handleDriftRun(request: Request, env: Env, workspace: DurableObjectStub, principal: Principal, comparisonId: string | null) {
+  const requestId = crypto.randomUUID()
+  const body = await safeJson<Record<string, unknown>>(request)
+  const driftError = (error: string, status: number, extra: Record<string, unknown> = {}) =>
+    noStoreJson({ error, requestId, ...extra }, undefined, { "X-Lyta-Request-Id": requestId }, status)
+  let input: DriftInput
+  let previousRun: DriftRun | null = null
+
+  if (comparisonId) {
+    const stored = await workspace.fetch("https://internal/drift/get", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({ id: comparisonId })
+    })
+
+    if (!stored.ok) {
+      return copyResponse(stored)
+    }
+
+    const { comparison, run } = (await stored.json()) as { comparison: DriftComparison; run: DriftRun }
+
+    // Checked again when saving; refusing here avoids spending a model call on a run that cannot be stored.
+    if (comparison.runs.length >= MAX_DRIFT_RUNS) {
+      return driftError(
+        `This comparison already has ${MAX_DRIFT_RUNS} runs. Start a new comparison so earlier run history is kept intact.`,
+        409
+      )
+    }
+
+    const sources = validateDriftSources(body?.sources ?? selectionOf(run.sources), comparison.type)
+
+    if (!sources.ok) {
+      return new Response(sources.error, { status: 400 })
+    }
+
+    previousRun = run
+    input = { comparisonType: comparison.type, scope: comparison.scope, rules: comparison.rules, sources: sources.value }
+  } else {
+    const parsed = validateDriftInput(body)
+
+    if (!parsed.ok) {
+      return new Response(parsed.error, { status: 400 })
+    }
+
+    input = parsed.value
+  }
+
+  const roles = DRIFT_COMPARISONS[input.comparisonType].roles
+  const requestMetadata = {
+    requestId,
+    route: comparisonId ? "/drift/runs" : "/drift",
+    sourceCount: roles.reduce((total, role) => total + input.sources[role].length, 0),
+    principalType: principal.user.isGuest ? "guest" : "account",
+    workspacePrefix: scopedPrefix(principal.workspaceKey)
+  }
+
+  const tokenLimited = await enforceLimit(env, "chat-tokens", principal.workspaceKey, {
+    limit: principal.user.isGuest ? 40_000 : 240_000,
+    windowMs: 60 * 60_000,
+    cost: Math.max(1, Math.ceil((input.scope.length + roles.length * DRIFT_EVIDENCE_TOP_K * 260) / 4))
+  })
+  if (tokenLimited) return tokenLimited
+
+  const resolved = await workspace.fetch("https://internal/drift/sources", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ sources: input.sources })
+  })
+
+  if (!resolved.ok) {
+    return driftError("Unable to read the selected sources. Please retry.", 502)
+  }
+
+  const { sources, unavailableSourceFileIds } = (await resolved.json()) as { sources: DriftSource[]; unavailableSourceFileIds: string[] }
+
+  if (unavailableSourceFileIds.length) {
+    return driftError("Some selected sources are no longer available in this workspace. Reselect your sources and retry.", 409, {
+      unavailableSourceFileIds
+    })
+  }
+
+  const byRole: Array<{ role: DriftRole; citations: LibraryCitation[] }> = []
+
+  for (const role of roles) {
+    const retrieval = await searchWorkspaceLibrary(
+      env,
+      workspace,
+      { message: buildDriftQuery(input.scope, toDriftEvidence(byRole)), mode: "deep", attachments: [] },
+      requestMetadata,
+      { sourceFileIds: input.sources[role], topK: DRIFT_EVIDENCE_TOP_K, policyVersion: `${DRIFT_POLICY_VERSION}.${role}` }
+    )
+
+    if (retrieval.failed) {
+      return driftError("Unable to retrieve evidence from the selected sources. Please retry.", 502)
+    }
+
+    if (retrieval.unavailableSourceFileIds.length) {
+      return driftError("Some selected sources are no longer available in this workspace. Reselect your sources and retry.", 409, {
+        unavailableSourceFileIds: retrieval.unavailableSourceFileIds
+      })
+    }
+
+    byRole.push({ role, citations: retrieval.citations })
+  }
+
+  const evidence = toDriftEvidence(byRole)
+  const coverage = buildDriftCoverage(roles, sources, evidence)
+  const modelRules = input.rules.filter((rule) => DRIFT_RULE_DEFINITIONS[rule].owner === "model")
+  const hasAnchors = evidence.some((item) => item.role === "specification" || item.role === "architecture")
+  const adjustments: string[] = []
+  let summary = ""
+  let modelFindings: DriftFinding[] = []
+  let modelVersion: string | null = null
+
+  if (modelRules.length && hasAnchors) {
+    const profile = getModelProfile("deep")
+    let modelReply: unknown
+
+    try {
+      const result = await callWithPolicy("ai.drift", profile, (model) =>
+        env.AI.run(model, {
+          messages: buildDriftMessages({
+            scope: input.scope,
+            rules: input.rules,
+            sources,
+            evidence,
+            priorFindings: previousRun?.findings || []
+          }),
+          temperature: profile.temperature,
+          top_p: profile.top_p,
+          max_tokens: profile.max_tokens
+        })
+      )
+      modelReply = result && typeof result === "object" ? (result as { response?: unknown }).response : undefined
+    } catch (error) {
+      logServerError("router.drift.model", error, requestMetadata)
+      return driftError("The drift model is unavailable right now. Please retry.", 502)
+    }
+
+    const output = parseDriftOutput(modelReply, { evidence, sources, coverage, rules: input.rules })
+
+    if (!output.ok) {
+      logServerError("router.drift.output", new Error(output.error), requestMetadata)
+      return driftError(`${output.error} No drift run was saved; please retry.`, 502)
+    }
+
+    summary = output.value.summary
+    modelFindings = output.value.findings
+    adjustments.push(...output.value.adjustments)
+    modelVersion = profile.modelVersion
+  } else if (modelRules.length) {
+    summary = "No specification or architecture passage matched the scope, so there was nothing to compare. Only the source checks ran."
+    adjustments.push("The model was not called: no specification or architecture passage was retrieved.")
+  } else {
+    summary = "Only the source checks were selected for this comparison."
+  }
+
+  const sourceChecks = input.rules.includes("stale-or-missing-source") ? buildSourceCheckFindings(sources, coverage) : []
+  const findings = finalizeDriftFindings([...sourceChecks, ...modelFindings], adjustments)
+
+  const saved = await workspace.fetch("https://internal/drift/runs/save", {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      comparisonId,
+      comparison: { type: input.comparisonType, scope: input.scope, rules: input.rules },
+      run: {
+        requestId,
+        comparisonType: input.comparisonType,
+        scope: input.scope,
+        rules: input.rules,
+        sources,
+        evidence,
+        coverage,
+        summary,
+        findings,
+        adjustments,
+        modelVersion,
+        policyVersion: DRIFT_POLICY_VERSION
+      }
+    })
+  })
+
+  if (!saved.ok) {
+    if (saved.status === 409 || saved.status === 404) return copyResponse(saved)
+    logServerError("router.drift.save", new Error(`Drift storage rejected the run (${saved.status}).`), requestMetadata)
+    return driftError("Unable to save the drift run right now.", 502)
+  }
+
+  return noStoreJson(await saved.json(), { requestId }, { "X-Lyta-Request-Id": requestId }, 201)
+}
+
+function selectionOf(sources: DriftSource[]) {
+  return sources.reduce<Record<string, string[]>>((selection, source) => {
+    selection[source.role] = [...(selection[source.role] || []), source.fileId]
+    return selection
+  }, {})
 }
 
 async function handleAuth(request: Request, env: Env, action: "register" | "login") {

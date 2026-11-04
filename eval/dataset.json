@@ -1,5 +1,5 @@
 {
-  "version": "2026-11-03.2",
+  "version": "2026-11-04.1",
   "baselinePassRate": 1.0,
   "cases": [
     {
@@ -468,6 +468,602 @@
         "expectOutcome": "insufficient evidence",
         "expectConclusionChanged": false
       }
+    },
+    {
+      "id": "drift-001",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "Lanternfish v1: one contradiction and two missing counterparts, plus noise the contract must drop.",
+        "findings": [
+          {
+            "rule": "requirement-without-support",
+            "subject": "CSV export",
+            "claim": "REQ-1 requires exporting all bookmarks as CSV.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ]
+          },
+          {
+            "rule": "component-without-implementation",
+            "subject": "SearchIndexer",
+            "claim": "The architecture describes a SearchIndexer that indexes bookmark titles.",
+            "confidence": "medium",
+            "claimCitations": [
+              "E2"
+            ]
+          },
+          {
+            "rule": "interface-contradiction",
+            "subject": "session TTL",
+            "claim": "Sessions expire after 30 minutes idle.",
+            "counterpart": "SESSION_TTL_SECONDS = 86400.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ],
+            "counterpartCitations": [
+              "E3"
+            ]
+          },
+          {
+            "rule": "requirement-without-support",
+            "subject": "purge job",
+            "claim": "Trash purges after 7 days.",
+            "confidence": "low",
+            "claimCitations": [
+              "E3"
+            ]
+          },
+          {
+            "rule": "component-without-implementation",
+            "subject": "TrashService",
+            "claim": "TrashService purges deleted items.",
+            "confidence": "medium",
+            "claimCitations": [
+              "E9"
+            ]
+          },
+          {
+            "rule": "interface-contradiction",
+            "subject": "page size",
+            "claim": "SyncService returns 100 per page.",
+            "confidence": "high",
+            "claimCitations": [
+              "E2"
+            ],
+            "counterpartCitations": [
+              "E2"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "requirement-without-support:csv-export",
+          "claimFiles": [
+            "lanternfish-prd.md"
+          ],
+          "counterpartKind": "not-found-in-supplied-evidence",
+          "confidence": "medium"
+        },
+        {
+          "key": "component-without-implementation:searchindexer",
+          "claimFiles": [
+            "lanternfish-architecture.md"
+          ],
+          "counterpartKind": "not-found-in-supplied-evidence"
+        },
+        {
+          "key": "interface-contradiction:session-ttl",
+          "claimFiles": [
+            "lanternfish-prd.md"
+          ],
+          "counterpartFiles": [
+            "lanternfish-code-export.md"
+          ],
+          "counterpartKind": "cited",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "id": "drift-002",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "Lanternfish v1.",
+        "findings": [
+          {
+            "rule": "requirement-without-support",
+            "subject": "CSV export",
+            "claim": "REQ-1 requires exporting all bookmarks as CSV.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ]
+          },
+          {
+            "rule": "component-without-implementation",
+            "subject": "SearchIndexer",
+            "claim": "The architecture describes a SearchIndexer that indexes bookmark titles.",
+            "confidence": "medium",
+            "claimCitations": [
+              "E2"
+            ]
+          },
+          {
+            "rule": "interface-contradiction",
+            "subject": "session TTL",
+            "claim": "Sessions expire after 30 minutes idle.",
+            "counterpart": "SESSION_TTL_SECONDS = 86400.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ],
+            "counterpartCitations": [
+              "E3"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "requirement-without-support:csv-export",
+          "claimFiles": [
+            "lanternfish-prd.md"
+          ]
+        },
+        {
+          "key": "component-without-implementation:searchindexer",
+          "claimFiles": [
+            "lanternfish-architecture.md"
+          ]
+        },
+        {
+          "key": "interface-contradiction:session-ttl",
+          "claimFiles": [
+            "lanternfish-prd.md"
+          ],
+          "counterpartFiles": [
+            "lanternfish-code-export.md"
+          ]
+        }
+      ],
+      "rerun": {
+        "sources": {
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v2/lanternfish-code-export.md"
+            }
+          ]
+        },
+        "reply": {
+          "summary": "Lanternfish v2: TTL fixed and indexer added; the rate limit now contradicts the PRD.",
+          "findings": [
+            {
+              "rule": "requirement-without-support",
+              "subject": "CSV export",
+              "claim": "REQ-1 requires exporting all bookmarks as CSV.",
+              "confidence": "medium",
+              "claimCitations": [
+                "E1"
+              ]
+            },
+            {
+              "rule": "interface-contradiction",
+              "subject": "API rate limit",
+              "claim": "The public API allows 120 requests/minute per user.",
+              "counterpart": "RATE_LIMIT_PER_MIN = 60.",
+              "confidence": "high",
+              "claimCitations": [
+                "E1"
+              ],
+              "counterpartCitations": [
+                "E3"
+              ]
+            }
+          ]
+        },
+        "expectStatus": 201,
+        "expectDiff": {
+          "new": [
+            "interface-contradiction:api-rate-limit"
+          ],
+          "unchanged": [
+            "requirement-without-support:csv-export"
+          ],
+          "resolved": [
+            "component-without-implementation:searchindexer",
+            "interface-contradiction:session-ttl"
+          ]
+        },
+        "expectFindings": [
+          {
+            "key": "requirement-without-support:csv-export",
+            "claimFiles": [
+              "lanternfish-prd.md"
+            ]
+          },
+          {
+            "key": "interface-contradiction:api-rate-limit",
+            "claimFiles": [
+              "lanternfish-prd.md"
+            ],
+            "counterpartFiles": [
+              "lanternfish-code-export.md"
+            ],
+            "counterpartKind": "cited"
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-003",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "name": "build-log.txt",
+              "text": "NO-MATCH build log with no source excerpts."
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "No implementation passage matched; the indexer has no counterpart in what was retrieved.",
+        "findings": [
+          {
+            "rule": "component-without-implementation",
+            "subject": "SearchIndexer",
+            "claim": "The architecture describes a SearchIndexer that indexes bookmark titles.",
+            "confidence": "medium",
+            "claimCitations": [
+              "E2"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "stale-or-missing-source:missing-implementation",
+          "counterpartKind": "source-check",
+          "confidence": "high"
+        },
+        {
+          "key": "component-without-implementation:searchindexer",
+          "claimFiles": [
+            "lanternfish-architecture.md"
+          ],
+          "counterpartKind": "not-found-in-supplied-evidence",
+          "confidence": "low"
+        }
+      ]
+    },
+    {
+      "id": "drift-004",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        },
+        "laterImports": [
+          {
+            "name": "lanternfish-architecture.md",
+            "text": "# Lanternfish architecture (fictional demo), revised\n- Gateway: sessions in KV, 30 min idle TTL.\n- ExportWorker: writes bookmarks as CSV."
+          }
+        ]
+      },
+      "driftReply": {
+        "summary": "Lanternfish v1 against a superseded architecture document.",
+        "findings": [
+          {
+            "rule": "interface-contradiction",
+            "subject": "session TTL",
+            "claim": "Sessions expire after 30 minutes idle.",
+            "counterpart": "SESSION_TTL_SECONDS = 86400.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ],
+            "counterpartCitations": [
+              "E3"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "stale-or-missing-source:superseded-lanternfish-architecture-md",
+          "counterpartKind": "source-check",
+          "confidence": "high"
+        },
+        {
+          "key": "interface-contradiction:session-ttl",
+          "claimFiles": [
+            "lanternfish-prd.md"
+          ],
+          "counterpartFiles": [
+            "lanternfish-code-export.md"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "drift-005",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "Absence worded as a fact about the project.",
+        "findings": [
+          {
+            "rule": "component-without-implementation",
+            "subject": "SearchIndexer",
+            "claim": "The architecture describes a SearchIndexer.",
+            "detail": "The SearchIndexer does not exist in the codebase.",
+            "counterpart": "There is no indexer anywhere in the project.",
+            "confidence": "high",
+            "claimCitations": [
+              "E2"
+            ]
+          },
+          {
+            "rule": "requirement-without-support",
+            "subject": "CSV export",
+            "claim": "CSV export is not implemented anywhere.",
+            "confidence": "high",
+            "claimCitations": [
+              "E1"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "component-without-implementation:searchindexer",
+          "claimFiles": [
+            "lanternfish-architecture.md"
+          ],
+          "counterpartKind": "not-found-in-supplied-evidence",
+          "confidence": "medium"
+        }
+      ],
+      "exportMustNotContain": [
+        "does not exist in the codebase",
+        "not implemented anywhere",
+        "no indexer anywhere"
+      ],
+      "exportMustContain": [
+        "Not found in the supplied evidence"
+      ]
+    },
+    {
+      "id": "drift-006",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Kestrel payroll retries and payslip delivery.",
+        "sources": {
+          "specification": [
+            {
+              "name": "kestrel-prd.md",
+              "text": "# Kestrel Payroll PRD (fictional)\nPAY-1 Failed bank transfers retry 3 times.\nPAY-2 Payslips are emailed as PDF."
+            }
+          ],
+          "architecture": [
+            {
+              "name": "kestrel-design.md",
+              "text": "# Kestrel design (fictional)\nTransferWorker retries failed transfers 3 times with backoff."
+            }
+          ],
+          "implementation": [
+            {
+              "name": "kestrel-code.md",
+              "text": "# Kestrel code export (fictional)\ntransfer/worker.ts: MAX_RETRIES = 5\npayslip/mailer.ts: sendPdf(payslip)"
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "Retry count disagrees between design and code.",
+        "findings": [
+          {
+            "rule": "interface-contradiction",
+            "subject": "transfer retries",
+            "claim": "TransferWorker retries failed transfers 3 times.",
+            "counterpart": "MAX_RETRIES = 5.",
+            "confidence": "high",
+            "claimCitations": [
+              "E2"
+            ],
+            "counterpartCitations": [
+              "E3"
+            ]
+          },
+          {
+            "rule": "requirement-without-support",
+            "subject": "PDF payslips",
+            "claim": "Payslips are emailed as PDF.",
+            "confidence": "medium",
+            "claimCitations": [
+              "E2"
+            ]
+          }
+        ]
+      },
+      "expectStatus": 201,
+      "expectFindings": [
+        {
+          "key": "interface-contradiction:transfer-retries",
+          "claimFiles": [
+            "kestrel-design.md"
+          ],
+          "counterpartFiles": [
+            "kestrel-code.md"
+          ],
+          "counterpartKind": "cited",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "id": "drift-007",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "comparisonType": "spec-vs-tests",
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        }
+      },
+      "driftReply": {
+        "summary": "Never called.",
+        "findings": []
+      },
+      "expectStatus": 400,
+      "expectFindings": []
+    },
+    {
+      "id": "drift-008",
+      "category": "drift-detection",
+      "mode": "deep",
+      "drift": {
+        "scope": "Lanternfish sessions, API limits, search, export, and trash.",
+        "sources": {
+          "specification": [
+            {
+              "fixture": "fixtures/drift/lanternfish-prd.md"
+            }
+          ],
+          "architecture": [
+            {
+              "fixture": "fixtures/drift/lanternfish-architecture.md"
+            }
+          ],
+          "implementation": [
+            {
+              "fixture": "fixtures/drift/v1/lanternfish-code-export.md"
+            }
+          ]
+        }
+      },
+      "driftReply": "Everything drifted, trust me.",
+      "expectStatus": 502,
+      "expectFindings": []
     }
-  ]
+  ],
+  "driftScoring": {
+    "rulePrecisionFloor": 1.0,
+    "citationIdentityFloor": 1.0
+  }
 }

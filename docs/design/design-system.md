@@ -63,6 +63,11 @@ in Settings.
 | Blocked / withdrawn / failed | `--danger` | Verdict rule, callouts, evidence-state rule |
 | Selected / focused / primary | `--accent` | Selected finding, focus ring, pressed toggles, primary button |
 | Inference / recommendation | `--border-strong` | Neutral chip; never green |
+| Drift: new finding | `--warning` | Diff badge |
+| Drift: resolved finding | `--success` | Diff badge (with "not proof of a fix" copy) |
+| Drift: unchanged finding, source check | `--border-strong` | Diff badge, evidence-state rule |
+| Drift: cited contradiction | `--danger` | Counterpart evidence-state rule |
+| Drift: not found in the supplied evidence | `--warning` | Counterpart evidence-state rule; never presented as absent from the project |
 
 ### Contrast (WCAG 2.1 AA)
 
@@ -144,6 +149,8 @@ uses `--border-strong`.
 │          ├───────────────────────────────┤  Source evidence     │
 │ Review a │ Review brief (centre)         │  (adjacent panel)    │
 │ change   │  verdict · callouts           │  claim · state       │
+│ Check    │  — or — Drift run             │  claim · counterpart │
+│ drift    │   diff badges · sources       │  confidence · decide │
 │ Records  │  findings (selectable claims) │  passages + ids      │
 │ New chat │  tests · rollback · gaps …    │  retrieval context   │
 │ Reviews  │                               │  challenge history   │
@@ -178,6 +185,11 @@ persists for the browser session.
 | Sidebar list | `.sidebar-list-button[aria-current]` + `.sidebar-list-meta` | Reviews (readiness) and record counts by kind. |
 | Form field | `.settings-field` (label wraps `span` + control) | Controls use `--border-strong` and switch to `--accent` on focus. |
 | Loading | `.review-loading` + `.skeleton-lines` | Says what is happening; shimmer is decorative (`aria-hidden`). |
+| Drift role picker | `.drift-role-row` (label wraps file name + `select[aria-label="Role for …"]`) | One role per file; the select uses `--border-strong`. A live summary counts files per role. |
+| Drift summary | `.drift-summary` | Neutral left rule; summary, run number, model, policy. |
+| Diff badge | `.drift-badge[data-diff="new" \| "unchanged" \| "resolved"]` | Text label on `--surface`, coloured by the meaning map. |
+| Sources table | `.drift-table-wrap` + `.drift-sources-table` | `th[scope="col"]`; role, file, short version id (full id in the tooltip and on evidence cards), import time. Scrolls horizontally on narrow screens. |
+| Counterpart state | `.evidence-state[data-state="cited" \| "not-found" \| "source-check"]` | Server-written description of what was searched. |
 
 ## States
 
@@ -209,8 +221,9 @@ persists for the browser session.
   failure are all announced.
 - **No colour-only meaning:** chips, verdicts and states always carry a text
   label.
-- **No raw HTML:** review UI builds DOM with `textContent`. The test fails on
-  `innerHTML`, `outerHTML` or `insertAdjacentHTML` in `pages/app-review.js`.
+- **No raw HTML:** review and drift UI build DOM with `textContent`. The test
+  fails on `innerHTML`, `outerHTML` or `insertAdjacentHTML` in
+  `pages/app-review.js` or `pages/app-drift.js`.
 
 ## Adding a component
 

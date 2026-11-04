@@ -68,6 +68,7 @@ Purpose:
 - store reusable uploaded files
 - store searchable document chunks and vectors
 - store architecture change reviews and their finding dispositions
+- store drift comparisons, their immutable runs, and dispositions by finding key
 
 Why:
 
@@ -230,6 +231,13 @@ The workspace is organised around review output rather than chat (#8):
   never races the first request into a second guest workspace, and emits
   `lyta:library-changed` when files change. `LytaCore.announce()` drives the
   shared live regions.
+- **Other workflows plug into the same panel.** `app-review.js` exposes a
+  small `window.LytaWorkspaceUi` seam: a workflow registers a centre view and
+  an evidence renderer, and reuses the panel header, status line, evidence
+  inspector, mobile sheet, and DOM builders. `pages/app-drift.js` (helpers in
+  `pages-src/app-drift-core.ts`) is built this way, so drift checks have no
+  parallel panel. `lyta:centre-changed` and `lyta:sources-loaded` keep the
+  two scripts in step.
 - **Below 980px, side panels become bottom sheets** with focus management.
   Between 981 and 1180px, panels narrow instead of floating over the centre.
 
@@ -313,6 +321,65 @@ under **Project records**, independent of any chat.
 
 Not yet implemented: review types beyond architecture changes, and owner/date
 fields on the review input.
+
+## Drift Detection
+
+Drift detection compares an explicitly chosen specification, architecture, and
+implementation evidence set and reports bounded kinds of mismatch. It follows
+the review pattern rather than inventing a parallel one.
+
+```mermaid
+sequenceDiagram
+    participant UI as Check drift
+    participant R as Worker Router
+    participant W as Workspace DO
+    participant AI as Workers AI (Deep profile)
+    UI->>R: POST /drift (type, scope, sources by role, rules)
+    R->>R: validateDriftInput(): unsupported type/role/rule → 400
+    R->>W: /drift/sources (role → file ids)
+    W-->>R: versions, import dates, superseded-by, unavailable ids
+    loop specification, architecture, implementation
+        R->>W: /library/search (scope + earlier roles' passages, that role's files)
+        Note over W: manifest under 2026-11-04.drift.<role>
+    end
+    R->>AI: callWithPolicy(deep, role-labelled evidence, selected rules)
+    AI-->>R: JSON findings
+    R->>R: parseDriftOutput() + buildSourceCheckFindings()
+    R->>W: /drift/runs/save
+    W->>W: diffDriftRuns(previous run) by stable key
+    W-->>R: comparison + immutable run
+```
+
+Design decisions:
+
+- **Roles are explicit and exclusive.** The user gives each file one role.
+  Retrieval runs once per role, specification first, and later roles' queries
+  include earlier roles' passages so counterparts rank. Evidence refs are
+  numbered across roles, and each ref carries its role into the prompt.
+- **Rules are bounded and owned.** D1–D3 are proposed by the model and
+  validated. D4 (a role with no passage, or a superseded source) is computed by
+  the server from coverage and library metadata, so it cannot be hallucinated.
+  An unknown rule is malformed output, never approximated.
+- **Not found is not "does not exist".** For absence rules the counterpart is
+  always server text naming what was searched, confidence is capped at
+  `medium`, and model wording that asserts project-level absence is removed.
+  When the similarity floor (#28) drops every passage for a role, that role
+  shows up as a D4 finding and absence findings against it fall to `low`.
+- **History is append-only.** Each run is one storage key, written once. The
+  diff against the previous run is computed inside the Workspace DO's queue at
+  save time and stored on the new run, so concurrent re-runs still chain and
+  older runs never change. The only later mutation is the privacy one: deleting
+  a source clears its excerpts, as it does for reviews.
+- **Dispositions belong to the comparison.** They are keyed by
+  `rule:subject-slug`, so they survive re-runs. The re-run prompt lists the
+  previous subjects so a real model reuses them and keys stay stable.
+- **Storage stays bounded.** A comparison holds at most 25 runs; the 26th is
+  refused with `409` rather than dropping history. The 30 newest comparisons
+  are kept; older ones are evicted whole with their runs.
+
+Not yet implemented: comparison types beyond specification–architecture–
+implementation, saving a confirmed drift finding as a project record, and
+document-dated (rather than import-dated) staleness.
 
 ## Output Board Philosophy
 

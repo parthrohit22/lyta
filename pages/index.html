@@ -11,9 +11,11 @@
 <script src="https://cdn.jsdelivr.net/npm/mammoth@1.12.1/mammoth.browser.min.js" integrity="sha384-HDD+X9TzmVU2HzA3VYqphTtip2QgcmmSAuKTMkFv709AUMZ6LPn0ysDRZeQIL31w" crossorigin="anonymous" defer></script>
 <script src="/app-core.js" defer></script>
 <script src="/app-review-core.js" defer></script>
+<script src="/app-drift-core.js" defer></script>
 <script src="/app-attachments.js" defer></script>
 <script src="/app.js" defer></script>
 <script src="/app-review.js" defer></script>
+<script src="/app-drift.js" defer></script>
 </head>
 <body class="view-review">
 
@@ -33,6 +35,7 @@
   <symbol id="icon-more" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></symbol>
   <symbol id="icon-bookmark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></symbol>
   <symbol id="icon-review" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 011 1v2H8V4a1 1 0 011-1z"/><path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2"/><polyline points="9 14 11 16 15 12"/></symbol>
+  <symbol id="icon-drift" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5v3a4 4 0 004 4h5.5"/><path d="M18 15.5v-3a4 4 0 00-4-4H8.5"/></symbol>
   <symbol id="icon-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></symbol>
 </svg>
 
@@ -55,6 +58,11 @@
     <button id="openReview" class="primary-button full-width" type="button" aria-label="Review a change">
       <svg class="icon" aria-hidden="true"><use href="#icon-review"></use></svg>
       <span class="sidebar-label">Review a change</span>
+    </button>
+
+    <button id="openDrift" class="secondary-button full-width" type="button" aria-label="Check drift">
+      <svg class="icon" aria-hidden="true"><use href="#icon-drift"></use></svg>
+      <span class="sidebar-label">Check drift</span>
     </button>
 
     <button id="openRecords" class="secondary-button full-width" type="button" aria-label="Project records">
@@ -82,6 +90,14 @@
           <span class="sidebar-note" id="reviewCount">0 reviews</span>
         </div>
         <ul id="sidebarReviews" class="sidebar-review-list"></ul>
+      </section>
+
+      <section class="sidebar-section" aria-labelledby="sidebarDriftTitle">
+        <div class="sidebar-heading">
+          <span class="sidebar-title" id="sidebarDriftTitle">Drift checks</span>
+          <span class="sidebar-note" id="driftCount">0 checks</span>
+        </div>
+        <ul id="sidebarDrift" class="sidebar-review-list"></ul>
       </section>
 
       <section class="sidebar-section" aria-labelledby="sidebarRecordsTitle">
@@ -196,6 +212,12 @@
               <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
               Export brief
             </button>
+            <button id="driftNew" class="secondary-button" type="button" hidden>New drift check</button>
+            <button id="driftRerun" class="secondary-button" type="button" hidden>Re-run with changed sources</button>
+            <button id="driftExport" class="secondary-button" type="button" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#icon-download"></use></svg>
+              Export report
+            </button>
           </div>
         </div>
 
@@ -269,6 +291,55 @@
               <button id="recordSubmit" class="primary-button" type="submit">Save record</button>
             </div>
           </form>
+        </div>
+
+        <div id="driftStartView" class="review-view" hidden>
+          <p class="review-intro">
+            Compare what the specification promises, what the architecture describes, and what the implementation evidence shows. Give each library file one role. LYTA checks four bounded kinds of drift, and reports anything missing as not found in the supplied evidence, never as absent from the project.
+          </p>
+
+          <form id="driftForm" class="review-form" novalidate>
+            <label class="settings-field">
+              <span>Scope</span>
+              <textarea id="driftScope" rows="2" maxlength="1200" required aria-describedby="driftScopeNote" placeholder="e.g. Session handling, API limits, and bookmark export"></textarea>
+            </label>
+            <p id="driftScopeNote" class="settings-note">Retrieval searches each role for this scope. It stays fixed when you re-run the comparison, so findings can be matched across runs.</p>
+
+            <fieldset class="review-sources">
+              <legend>Sources and roles</legend>
+              <p id="driftRoleSummary" class="settings-note" aria-live="polite"></p>
+              <div id="driftSourceList" class="review-source-list drift-role-list"></div>
+              <button id="driftAddSources" class="secondary-button" type="button">Add files to the library</button>
+            </fieldset>
+
+            <fieldset class="review-sources" id="driftRules">
+              <legend>Drift rules</legend>
+              <label class="review-source drift-rule">
+                <input id="driftRuleD1" type="checkbox" name="driftRule" value="requirement-without-support" checked>
+                <span><strong>D1</strong> A requirement with no supporting architecture or implementation passage</span>
+              </label>
+              <label class="review-source drift-rule">
+                <input id="driftRuleD2" type="checkbox" name="driftRule" value="component-without-implementation" checked>
+                <span><strong>D2</strong> An architecture component with no implementation passage</span>
+              </label>
+              <label class="review-source drift-rule">
+                <input id="driftRuleD3" type="checkbox" name="driftRule" value="interface-contradiction" checked>
+                <span><strong>D3</strong> An interface or constraint that two roles state differently, both cited</span>
+              </label>
+              <label class="review-source drift-rule">
+                <input id="driftRuleD4" type="checkbox" name="driftRule" value="stale-or-missing-source" checked>
+                <span><strong>D4</strong> A role with no matching passage, or a source with a newer version in the library</span>
+              </label>
+            </fieldset>
+
+            <div class="settings-actions">
+              <button id="driftSubmit" class="primary-button" type="submit">Run drift check</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="driftRunView" class="review-view" hidden>
+          <div id="driftRun" class="review-brief"></div>
         </div>
       </section>
 
