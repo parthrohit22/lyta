@@ -40,26 +40,34 @@ If this release adds a new Durable Object SQLite migration tag in
 ## 3. AI-evaluation comparison
 
 Before promoting a model or prompt change (`src/config/modelProfiles.ts`,
-`src/chat/messages.ts`'s system prompts):
+`src/chat/messages.ts`'s system prompts, the review or drift prompts and
+contracts), follow
+[`eval/README.md`](eval/README.md#cross-model-evaluation-and-promotion-policy):
 
-- Run [`eval/dataset.json`](eval/dataset.json)'s cases against the current
-  production model and the candidate, following
-  [`eval/README.md`](eval/README.md#running-against-a-real-model)'s manual
-  procedure — CI's automated run of this suite (`npm run test:eval`) only
-  checks pipeline correctness against a scripted fake model, not real
-  output quality.
-- Compare citation accuracy, insufficient-evidence compliance, latency, and
-  estimated cost against `MODEL_PROFILES`' documented `targets` in
-  `src/config/modelProfiles.ts` (`recordOperation`'s `estimatedSpendUnits`
-  in `src/utils/telemetry.ts` gives a rough cost proxy).
-- Do not describe the candidate as "stronger" unless it meets or exceeds
-  the baseline on every dimension above — see `eval/README.md`'s promotion
-  policy.
-- This is a lightweight version of the full cross-model evaluation and
-  promotion policy tracked in
-  [issue #16](https://github.com/parthrohit22/lyta/issues/16), which adds
-  broader fixtures once Architecture Change Review and Drift Detection
-  ship.
+- CI's `npm run test:eval` only proves the harness and gate work against a
+  scripted model. It is not evidence about any model.
+- Run the cross-model evaluation against real models (`wrangler dev --remote`
+  with the eval route enabled, then
+  `npm run eval:run -- --backend workers-ai --label <label>`; full steps in
+  [`eval/README.md`](eval/README.md#running-against-real-models)). The
+  baseline and every candidate run the same task contracts on the same
+  fixtures.
+- Review the generated `eval/reports/<date>-<label>.md`: per-task evidence
+  precision and recall, citation correctness, unsupported-claim rate,
+  structured-output validity, task accuracy, latency p50/p95, estimated cost,
+  and the trust fixtures.
+- Promote only a candidate that `npm run eval:promote -- --report <file>
+  --candidate <id>` accepts: it meets every threshold in
+  `eval/thresholds.json`, does not regress beyond the allowed margin, and
+  fails no trust fixture the baseline passes.
+- Commit the report in the same PR as the routing change. CI's routing guard
+  (`npm run eval:routing-guard`) fails a PR that routes a new model without a
+  passing real-model report.
+- Update the "Current baseline vs candidates" table in `eval/README.md` from
+  the report. Until the first real run it stays marked "pending first real
+  run".
+- Prompt or contract changes that keep the same model are not caught by the
+  routing guard. Re-run the evaluation for them by hand and attach the report.
 
 ## 4. Manual accessibility smoke test
 

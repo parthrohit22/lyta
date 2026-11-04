@@ -1,0 +1,673 @@
+{
+  "synthetic": "Every system, team, document and value here is fictional and written for this evaluation.",
+  "fixtures": [
+    {
+      "id": "acr-profile-read-cache",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Supported change: read cache within an accepted staleness budget",
+      "input": {
+        "proposedChange": "Add a read-through cache in front of Kestrel profile reads with a 60 second TTL, evicting entries on profile.updated events. Billing and permission fields are excluded from the cache.",
+        "intendedOutcome": "Cut profile read p95 below 150 ms."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "kestrel-profile-design.md",
+          "text": "Kestrel profile service: profile reads are about 40 times more frequent than writes. Read p95 is 410 ms because every read hits the primary database. Every profile write publishes a profile.updated event on the internal bus."
+        },
+        {
+          "id": "P2",
+          "file": "kestrel-cache-runbook.md",
+          "text": "Cache invalidation: any consumer that caches profile data must subscribe to profile.updated and evict that profile id within 5 seconds. Hit ratio and eviction lag are exported as kestrel_cache_hit_ratio and kestrel_cache_evict_lag_seconds."
+        },
+        {
+          "id": "P3",
+          "file": "adr-007-profile-staleness.md",
+          "text": "ADR-007 (accepted): profile display data may be up to 120 seconds stale. Billing and permission data must always be read from the primary."
+        }
+      ],
+      "expected": { "evidence": ["P1", "P2", "P3"], "readiness": ["ready"] },
+      "acceptableUncertainty": {
+        "note": "A cautious review may hold the change until a load test confirms the p95 target; that is acceptable.",
+        "readiness": ["needs evidence"]
+      },
+      "prohibited": [
+        {
+          "id": "claims-strong-consistency",
+          "kind": "statement",
+          "pattern": "strongly consistent|strong consistency",
+          "example": "The cache is strongly consistent with the primary.",
+          "reason": "A TTL cache is eventually consistent; ADR-007 only allows bounded staleness."
+        }
+      ],
+      "reference": {
+        "readiness": "ready",
+        "rationale": "The 60 second TTL is inside ADR-007's 120 second staleness budget, eviction on profile.updated follows the cache runbook, and billing and permission fields stay on the primary.",
+        "findings": [
+          {
+            "title": "The TTL fits the accepted staleness budget",
+            "detail": "ADR-007 allows profile display data to be up to 120 seconds stale.",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "area": "ADR-007",
+            "citations": ["@P3"]
+          },
+          {
+            "title": "Eviction follows the profile.updated contract",
+            "detail": "The runbook requires eviction within 5 seconds of profile.updated, which the design already publishes.",
+            "classification": "evidence-backed",
+            "areaType": "interface",
+            "area": "profile.updated event",
+            "citations": ["@P2", "@P1"]
+          },
+          {
+            "title": "Read-heavy load justifies caching",
+            "detail": "Reads outnumber writes about 40 to 1 and all hit the primary.",
+            "classification": "evidence-backed",
+            "areaType": "component",
+            "area": "Kestrel profile service",
+            "citations": ["@P1"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": ["Load test showing profile read p95 under 150 ms"],
+        "observability": ["Alert when kestrel_cache_evict_lag_seconds exceeds 5"],
+        "rollback": ["Disable the cache flag so reads go to the primary"],
+        "missingEvidence": [],
+        "assumptions": ["The cache excludes billing and permission fields"],
+        "openQuestions": [],
+        "nextActions": ["Run the load test"]
+      }
+    },
+    {
+      "id": "acr-ledger-migration-no-rollback",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Missing evidence: irreversible migration without a rollback",
+      "input": {
+        "proposedChange": "Ship the ledger schema v4 migration in one deploy, dropping the legacy amount column right after the backfill.",
+        "intendedOutcome": "Store all ledger amounts as integer minor units."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "kestrel-ledger-migration-plan.md",
+          "text": "Ledger schema v4 migration: add a currency_minor_units column, backfill it from amount * 100, then drop the legacy amount column in the same deploy. The backfill runs in batches of 10,000 rows."
+        },
+        {
+          "id": "P2",
+          "file": "kestrel-ledger-ops.md",
+          "text": "Ledger deploys run in the Tuesday change window. The on-call engineer watches the ledger_write_errors dashboard for 30 minutes after each deploy."
+        }
+      ],
+      "expected": { "evidence": ["P1"], "readiness": ["needs evidence"] },
+      "acceptableUncertainty": {
+        "note": "Blocked is acceptable: dropping the column in the same deploy can be read as an unmet prerequisite. Citing the ops note is optional.",
+        "readiness": ["blocked"],
+        "optionalEvidence": ["P2"]
+      },
+      "prohibited": [
+        { "id": "ready-without-rollback", "kind": "readiness", "value": "ready", "reason": "No rollback exists for a destructive column drop." },
+        {
+          "id": "claims-rollback-documented",
+          "kind": "statement",
+          "pattern": "rollback (plan|procedure|path) (is|was|has been) (documented|tested|in place)",
+          "example": "The rollback plan is documented.",
+          "reason": "Neither source describes a rollback."
+        }
+      ],
+      "reference": {
+        "readiness": "needs evidence",
+        "rationale": "The plan drops the legacy amount column in the same deploy as the backfill, and no source describes how to restore it.",
+        "findings": [
+          {
+            "title": "Dropping amount in the same deploy is irreversible",
+            "detail": "Once the column is dropped, a bad backfill cannot be corrected from the original values.",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "ledger amount column",
+            "citations": ["@P1"]
+          },
+          {
+            "title": "No rollback procedure was retrieved",
+            "detail": "The sources do not say how to restore the amount column.",
+            "classification": "insufficient evidence",
+            "areaType": "operations",
+            "area": "rollback",
+            "citations": []
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": ["Backfill verification on a production-sized copy"],
+        "observability": [],
+        "rollback": ["Keep the amount column until the backfill is verified"],
+        "missingEvidence": ["A rollback or restore procedure for the dropped amount column"],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Split the column drop into a later deploy"]
+      }
+    },
+    {
+      "id": "acr-queue-retention-conflict",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Conflicting sources: queue retention",
+      "input": {
+        "proposedChange": "Rebuild the search index by replaying the last 3 days of Marigold events.",
+        "intendedOutcome": "Recover search documents lost in last week's indexer outage."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "marigold-queue-design.md",
+          "text": "Marigold queue design: events are retained for 7 days so consumers can replay after an outage."
+        },
+        {
+          "id": "P2",
+          "file": "marigold-ops-runbook.md",
+          "text": "Marigold operations: to control storage cost, topic retention was reduced to 24 hours in the March capacity review."
+        }
+      ],
+      "expected": { "evidence": ["P1", "P2"], "readiness": ["needs evidence"], "conflict": ["P1", "P2"] },
+      "acceptableUncertainty": {
+        "note": "Blocked is acceptable if the review treats the 24 hour retention as current, provided the conflict is still raised.",
+        "readiness": ["blocked"]
+      },
+      "prohibited": [
+        { "id": "ready-despite-conflict", "kind": "readiness", "value": "ready", "reason": "The sources disagree on whether 3 days of events exist." },
+        {
+          "id": "picks-seven-days",
+          "kind": "statement",
+          "pattern": "retention is (confirmed|definitely|certainly) (7|seven) days",
+          "example": "Retention is confirmed 7 days.",
+          "reason": "Choosing one source silently hides the conflict."
+        }
+      ],
+      "reference": {
+        "readiness": "needs evidence",
+        "rationale": "The replay needs 3 days of events, but the design and the operations runbook disagree on retention.",
+        "findings": [
+          {
+            "title": "The replay window depends on topic retention",
+            "detail": "A 3 day replay only works if retention is at least 3 days.",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "Marigold topic retention",
+            "citations": ["@P1", "@P2"]
+          }
+        ],
+        "conflicts": [
+          {
+            "description": "The design says events are kept for 7 days; the runbook says retention was cut to 24 hours.",
+            "citations": ["@P1", "@P2"]
+          }
+        ],
+        "requiredTests": [],
+        "observability": [],
+        "rollback": [],
+        "missingEvidence": ["The current Marigold topic retention setting"],
+        "assumptions": [],
+        "openQuestions": ["Which retention value is in force today?"],
+        "nextActions": ["Check the live topic configuration"]
+      }
+    },
+    {
+      "id": "acr-mtls-prerequisite",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Blocked: unmet prerequisite",
+      "input": {
+        "proposedChange": "Enforce mTLS between all Tidewater production services next sprint.",
+        "intendedOutcome": "Encrypt and authenticate internal service traffic."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "tidewater-security-plan.md",
+          "text": "Service-to-service mTLS requires the certificate rotation service, certwheel, to issue workload certificates and rotate them every 24 hours."
+        },
+        {
+          "id": "P2",
+          "file": "tidewater-platform-status.md",
+          "text": "Platform status, week 14: certwheel is still in staging. Its production rollout is scheduled for next quarter."
+        }
+      ],
+      "expected": { "evidence": ["P1", "P2"], "readiness": ["blocked"] },
+      "acceptableUncertainty": { "note": "Needs evidence is acceptable if the review asks for the certwheel rollout date.", "readiness": ["needs evidence"] },
+      "prohibited": [
+        { "id": "ready-without-certwheel", "kind": "readiness", "value": "ready", "reason": "The prerequisite is not in production." },
+        {
+          "id": "claims-certwheel-live",
+          "kind": "statement",
+          "pattern": "certwheel (is|has been) (live|deployed|available|running) in production",
+          "example": "certwheel is live in production.",
+          "reason": "The status note says certwheel is still in staging."
+        }
+      ],
+      "reference": {
+        "readiness": "blocked",
+        "rationale": "mTLS depends on certwheel for certificates, and certwheel is still in staging.",
+        "findings": [
+          {
+            "title": "mTLS depends on certwheel",
+            "detail": "Workload certificates come from certwheel and rotate every 24 hours.",
+            "classification": "evidence-backed",
+            "areaType": "component",
+            "area": "certwheel",
+            "citations": ["@P1"]
+          },
+          {
+            "title": "certwheel has not reached production",
+            "detail": "Its production rollout is scheduled for next quarter.",
+            "classification": "evidence-backed",
+            "areaType": "operations",
+            "area": "certwheel rollout",
+            "citations": ["@P2"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": [],
+        "rollback": [],
+        "missingEvidence": [],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Schedule mTLS enforcement after the certwheel production rollout"]
+      }
+    },
+    {
+      "id": "acr-no-evidence-retrieved",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Insufficient evidence: nothing retrieved",
+      "input": {
+        "proposedChange": "Move session storage from the Tidewater primary database to a dedicated key-value store.",
+        "intendedOutcome": "Reduce primary database load."
+      },
+      "passages": [],
+      "expected": { "evidence": [], "readiness": ["needs evidence"] },
+      "acceptableUncertainty": {
+        "note": "With nothing retrieved, needs evidence is the only correct outcome. Inferences and recommendations are fine; nothing can be evidence-backed."
+      },
+      "prohibited": [
+        { "id": "ready-without-evidence", "kind": "readiness", "value": "ready", "reason": "Nothing was retrieved." },
+        {
+          "id": "invents-load-figure",
+          "kind": "statement",
+          "pattern": "load (drops|will drop|falls|is reduced) by \\d+",
+          "example": "Primary load drops by 40 percent.",
+          "reason": "No source gives a load figure."
+        }
+      ],
+      "reference": {
+        "readiness": "needs evidence",
+        "rationale": "No passages were retrieved, so the session access pattern and current database load are unknown.",
+        "findings": [
+          {
+            "title": "Session access pattern is unknown",
+            "detail": "No source describes session read and write volume.",
+            "classification": "insufficient evidence",
+            "areaType": "data-path",
+            "area": "session storage",
+            "citations": []
+          },
+          {
+            "title": "Measure session traffic before choosing a store",
+            "detail": "Read and write volume decide whether a key-value store helps.",
+            "classification": "recommendation",
+            "areaType": "operations",
+            "area": "session storage",
+            "citations": []
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": [],
+        "rollback": [],
+        "missingEvidence": ["Session read and write volume", "Current primary database load"],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Add the session design and load data as sources"]
+      }
+    },
+    {
+      "id": "acr-irrelevant-evidence",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Insufficient evidence: retrieved sources do not cover the change",
+      "input": {
+        "proposedChange": "Enable automatic failover from the primary Tidewater database to the eu-west replica.",
+        "intendedOutcome": "Recover from a primary outage within 2 minutes."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "tidewater-logging-style.md",
+          "text": "Logging style guide: log messages use sentence case, include a request id, and never include user content."
+        },
+        {
+          "id": "P2",
+          "file": "tidewater-oncall-rota.md",
+          "text": "On-call rota: the platform team rotates weekly and hands over on Monday at 10:00 UTC."
+        }
+      ],
+      "expected": { "evidence": [], "readiness": ["needs evidence"] },
+      "acceptableUncertainty": {
+        "note": "Neither source covers failover. An inference or recommendation is fine, but nothing can be evidence-backed."
+      },
+      "prohibited": [
+        {
+          "id": "claims-failover-tested",
+          "kind": "statement",
+          "pattern": "failover (is|has been|was) (tested|verified|proven)",
+          "example": "Failover has been tested.",
+          "reason": "No source mentions a failover test."
+        },
+        { "id": "cites-logging-guide", "kind": "citation", "passage": "P1", "reason": "The logging guide says nothing about failover." }
+      ],
+      "reference": {
+        "readiness": "needs evidence",
+        "rationale": "The retrieved sources cover logging style and the on-call rota, not database failover.",
+        "findings": [
+          {
+            "title": "No failover runbook or replica lag data was retrieved",
+            "detail": "Recovery time cannot be judged without them.",
+            "classification": "insufficient evidence",
+            "areaType": "operations",
+            "area": "database failover",
+            "citations": []
+          },
+          {
+            "title": "Run a failover drill in staging",
+            "detail": "A drill would measure recovery time against the 2 minute goal.",
+            "classification": "recommendation",
+            "areaType": "operations",
+            "area": "database failover",
+            "citations": []
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": ["Staging failover drill with measured recovery time"],
+        "observability": ["Replica lag alerting"],
+        "rollback": [],
+        "missingEvidence": ["Failover runbook", "Replica lag measurements"],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Add the database high-availability design as a source"]
+      }
+    },
+    {
+      "id": "acr-tenant-rate-limit",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Supported change: limit increase within a documented allowance",
+      "input": {
+        "proposedChange": "Raise the per-tenant ingest rate limit for the largest tenant from 300 to 500 requests per second.",
+        "intendedOutcome": "Stop throttling the largest tenant during its daily batch."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "marigold-capacity.md",
+          "text": "Marigold ingest capacity test (May): the cluster sustained 2,400 requests per second with p99 latency of 180 ms. Current peak traffic across all tenants is 900 requests per second."
+        },
+        {
+          "id": "P2",
+          "file": "adr-011-tenant-limits.md",
+          "text": "ADR-011 (accepted): a per-tenant rate limit may be raised up to 25% of tested cluster capacity without a new capacity review."
+        }
+      ],
+      "expected": { "evidence": ["P1", "P2"], "readiness": ["ready"] },
+      "acceptableUncertainty": { "note": "Asking for a fresh capacity test is cautious but acceptable.", "readiness": ["needs evidence"] },
+      "prohibited": [
+        {
+          "id": "claims-over-capacity",
+          "kind": "statement",
+          "pattern": "exceeds (the )?(tested )?(cluster )?capacity",
+          "example": "500 requests per second exceeds the tested capacity.",
+          "reason": "500 is within 25% of the tested 2,400."
+        }
+      ],
+      "reference": {
+        "readiness": "ready",
+        "rationale": "500 requests per second is within ADR-011's allowance of 25% of the tested 2,400, and peak traffic leaves headroom.",
+        "findings": [
+          {
+            "title": "500 rps is within ADR-011's allowance",
+            "detail": "25% of the tested 2,400 rps is 600 rps.",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "area": "ADR-011",
+            "citations": ["@P2", "@P1"]
+          },
+          {
+            "title": "Peak traffic plus the increase stays under tested load",
+            "detail": "900 rps peak plus 200 rps is well below 2,400 rps.",
+            "classification": "evidence-backed",
+            "areaType": "operations",
+            "area": "Marigold ingest cluster",
+            "citations": ["@P1"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": ["Watch ingest p99 during the tenant's next batch"],
+        "rollback": ["Restore the 300 rps limit"],
+        "missingEvidence": [],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Apply the new limit before the next batch"]
+      }
+    },
+    {
+      "id": "acr-analytics-contact-field",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Blocked: change violates a data policy",
+      "input": {
+        "proposedChange": "Add the customer email column to the nightly analytics export so marketing can join campaign data.",
+        "intendedOutcome": "Measure campaign conversion per customer."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "kestrel-data-policy.md",
+          "text": "Data policy DP-3: analytics exports must never include contact fields (email address, phone number, postal address). Exceptions need written approval from the privacy lead."
+        },
+        {
+          "id": "P2",
+          "file": "kestrel-export-pipeline.md",
+          "text": "The nightly analytics export copies the customers table to the warehouse, excluding columns tagged contact."
+        }
+      ],
+      "expected": { "evidence": ["P1"], "readiness": ["blocked"] },
+      "acceptableUncertainty": {
+        "note": "Needs evidence is acceptable if the review asks whether a written exception exists. Citing the pipeline note is optional.",
+        "readiness": ["needs evidence"],
+        "optionalEvidence": ["P2"]
+      },
+      "prohibited": [
+        { "id": "ready-despite-policy", "kind": "readiness", "value": "ready", "reason": "DP-3 forbids contact fields in exports." },
+        {
+          "id": "claims-policy-compliance",
+          "kind": "statement",
+          "pattern": "complies with (the )?(data )?policy|DP-3 (allows|permits)",
+          "example": "The change complies with the data policy.",
+          "reason": "Email is a contact field under DP-3."
+        }
+      ],
+      "reference": {
+        "readiness": "blocked",
+        "rationale": "Email is a contact field that DP-3 keeps out of analytics exports unless the privacy lead approves an exception in writing.",
+        "findings": [
+          {
+            "title": "DP-3 excludes email from analytics exports",
+            "detail": "Contact fields need a written exception from the privacy lead.",
+            "classification": "evidence-backed",
+            "areaType": "data-path",
+            "area": "nightly analytics export",
+            "citations": ["@P1"]
+          },
+          {
+            "title": "The export already filters contact-tagged columns",
+            "detail": "Adding email would mean removing or bypassing that filter.",
+            "classification": "evidence-backed",
+            "areaType": "component",
+            "area": "export pipeline",
+            "citations": ["@P2"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": [],
+        "rollback": [],
+        "missingEvidence": [],
+        "assumptions": [],
+        "openQuestions": ["Has the privacy lead approved an exception in writing?"],
+        "nextActions": ["Join campaign data on a pseudonymous customer id instead"]
+      }
+    },
+    {
+      "id": "acr-async-webhooks-observability",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Missing evidence: observability gap",
+      "input": {
+        "proposedChange": "Switch webhook delivery to the v2 background queue for all customers.",
+        "intendedOutcome": "Remove webhook latency from the API request path."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "tidewater-webhooks-design.md",
+          "text": "Webhook delivery v2: deliveries move from synchronous calls in the request path to a background queue with up to 5 retries and exponential backoff."
+        },
+        {
+          "id": "P2",
+          "file": "tidewater-dashboards.md",
+          "text": "Current webhook dashboards: delivery success rate and request latency. Alerts: success rate below 99% for 10 minutes."
+        }
+      ],
+      "expected": { "evidence": ["P1", "P2"], "readiness": ["needs evidence"] },
+      "acceptableUncertainty": { "note": "No hedged alternative: shipping without queue lag monitoring misses the main operational risk." },
+      "prohibited": [
+        {
+          "id": "claims-queue-monitored",
+          "kind": "statement",
+          "pattern": "queue (lag|depth|backlog) (is|are) (already )?(monitored|alerted|covered)",
+          "example": "Queue lag is already monitored.",
+          "reason": "The dashboards cover success rate and latency only."
+        }
+      ],
+      "reference": {
+        "readiness": "needs evidence",
+        "rationale": "Delivery moves to a retrying background queue, but current dashboards and alerts cannot see queue lag or retry exhaustion.",
+        "findings": [
+          {
+            "title": "Delivery moves to a retrying background queue",
+            "detail": "Up to 5 retries with exponential backoff.",
+            "classification": "evidence-backed",
+            "areaType": "component",
+            "area": "webhook delivery v2",
+            "citations": ["@P1"]
+          },
+          {
+            "title": "Dashboards cover success rate and latency but not queue lag",
+            "detail": "A growing backlog would not alert.",
+            "classification": "evidence-backed",
+            "areaType": "operations",
+            "area": "webhook dashboards",
+            "citations": ["@P2"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": ["Alert on webhook queue lag and retry exhaustion"],
+        "rollback": ["Route deliveries back to the synchronous path"],
+        "missingEvidence": ["Queue lag and dead-letter monitoring for v2"],
+        "assumptions": [],
+        "openQuestions": [],
+        "nextActions": ["Add queue lag alerts before switching all customers"]
+      }
+    },
+    {
+      "id": "acr-superseded-decision",
+      "task": "architecture-review",
+      "suite": "core",
+      "trust": false,
+      "title": "Prior decision: a superseded ADR must not block the change",
+      "input": {
+        "proposedChange": "Add a GraphQL gateway for the internal support console.",
+        "intendedOutcome": "Let support engineers query several services from one endpoint."
+      },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "adr-012-graphql.md",
+          "text": "ADR-012 (superseded): a GraphQL gateway was rejected for public APIs because it bypasses the CDN cache."
+        },
+        {
+          "id": "P2",
+          "file": "adr-019-graphql-internal.md",
+          "text": "ADR-019 (accepted, supersedes ADR-012 for internal use): a GraphQL gateway is allowed for internal tools that do not sit behind the CDN."
+        }
+      ],
+      "expected": { "evidence": ["P2"], "readiness": ["ready"] },
+      "acceptableUncertainty": {
+        "note": "Needs evidence is acceptable if the review asks for a design of the gateway itself. Citing ADR-012 for history is optional.",
+        "readiness": ["needs evidence"],
+        "optionalEvidence": ["P1"]
+      },
+      "prohibited": [
+        { "id": "blocked-by-superseded-adr", "kind": "readiness", "value": "blocked", "reason": "ADR-012 is superseded for internal tools." },
+        {
+          "id": "claims-adr-012-forbids",
+          "kind": "statement",
+          "pattern": "ADR-012 (still )?(forbids|prohibits|blocks|rejects)",
+          "example": "ADR-012 still forbids a GraphQL gateway.",
+          "reason": "ADR-019 supersedes ADR-012 for internal use."
+        }
+      ],
+      "reference": {
+        "readiness": "ready",
+        "rationale": "ADR-019 allows a GraphQL gateway for internal tools outside the CDN, and the support console is one.",
+        "findings": [
+          {
+            "title": "ADR-019 allows a GraphQL gateway for internal tools",
+            "detail": "The support console is internal and not behind the CDN.",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "area": "ADR-019",
+            "citations": ["@P2"]
+          },
+          {
+            "title": "The earlier rejection covered public APIs only",
+            "detail": "ADR-012's CDN concern does not apply to internal tools.",
+            "classification": "evidence-backed",
+            "areaType": "prior-decision",
+            "area": "ADR-012",
+            "citations": ["@P1", "@P2"]
+          }
+        ],
+        "conflicts": [],
+        "requiredTests": [],
+        "observability": [],
+        "rollback": [],
+        "missingEvidence": [],
+        "assumptions": ["The support console is not exposed through the CDN"],
+        "openQuestions": [],
+        "nextActions": ["Write the gateway design"]
+      }
+    }
+  ]
+}

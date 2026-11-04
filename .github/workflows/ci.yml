@@ -65,6 +65,9 @@ jobs:
             git diff origin/main...HEAD -- src/config/modelProfiles.ts
           fi
 
+      - name: Require a passing real-model report for newly routed models
+        run: npm run eval:routing-guard
+
       - name: Type-check Worker source
         run: npx tsc --noEmit
 
