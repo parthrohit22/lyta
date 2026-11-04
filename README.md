@@ -320,7 +320,7 @@ the deploy workflow both run.
 ```bash
 npm run test:unit          # pure-function tests, no Durable Object involved
 npm run test:integration   # drive a Durable Object's fetch() against faked storage
-npm run test:eval          # scripted-model evaluation suite (eval/dataset.json)
+npm run test:eval          # scripted-model pipeline suite + model-eval dataset and promotion gate
 npm run test:smoke         # register -> upload -> chat -> stream through the real router
 ```
 
@@ -343,6 +343,7 @@ see below). Coverage areas called out in [issue #9](https://github.com/parthrohi
 | Review challenges and project records (changed, unchanged, insufficient counter-evidence) | `tests/integration/review-challenge.test.ts`, `tests/unit/review-contract.test.ts` |
 | Drift detection (each rule, not found vs does not exist, stale/missing sources, re-run diffing, disposition persistence, unsupported comparison types, malformed output, source deletion) | `tests/integration/drift-detection.test.ts`, `tests/unit/drift-contract.test.ts` |
 | Drift rule precision and citation identity (scored per rule against `eval/dataset.json`) | `tests/integration/eval-suite.test.ts` |
+| Cross-model evaluation: fixture schema, scoring, promotion gate, eval-only route (scripted backend; no real model) | `tests/integration/model-eval.test.ts`, `tests/unit/eval-score.test.ts`, `tests/unit/eval-gate.test.ts`, `tests/unit/eval-route.test.ts` |
 | Frontend accessibility (labels, names, id references, landmarks, live regions, focus, reduced motion, WCAG contrast for both themes, announcement and evidence-state text, no raw HTML in review or drift UI) | `tests/unit/frontend-accessibility.test.ts` |
 
 ## Model Configuration and Evaluation
@@ -359,16 +360,28 @@ used, timed out) — never prompt or response content.
 insufficient-evidence compliance, cross-mode sanity checks) that CI runs on
 every PR as a pipeline-correctness regression gate. See
 [`eval/README.md`](eval/README.md) for what that suite does and doesn't
-prove, and the model-promotion policy: no model or prompt change is called
-"stronger" until it beats the documented baseline against this suite, run
-against a real model.
+prove.
+
+Model choice is governed by the cross-model evaluation in
+[`eval/README.md`](eval/README.md#cross-model-evaluation-and-promotion-policy):
+27 synthetic fixtures across Architecture Change Review, Drift Detection and
+adversarial sources (`eval/fixtures/`), a pure scorer (`src/eval/score.ts`)
+for evidence precision/recall, citation correctness, unsupported-claim rate,
+structured-output validity, latency and estimated cost, documented thresholds
+(`eval/thresholds.json`), and a promotion gate that also fails any regression
+on a trust fixture. `npm run eval:run` runs the baseline and every candidate
+on the same prompts, either against a scripted backend (CI) or against Workers
+AI through an eval-only route on a local `wrangler dev --remote` Worker. **No
+real-model run has been recorded yet**, so the baseline-vs-candidates table is
+pending.
 
 ## CI/CD
 
 GitHub Actions runs formatting, the client build, unit tests, integration
 tests, the evaluation suite, the smoke test, TypeScript checks, browser
 bundle syntax checks, a generated-client consistency check, a production
-dependency audit, a model/prompt configuration change report, and a Worker
+dependency audit, a model/prompt configuration change report, a routing guard
+that requires a passing real-model evaluation report for any newly routed model, and a Worker
 deployment bundle validation as separate steps for every pull request and
 merge to `main` (`npm run check` runs the same gates locally in one
 command).

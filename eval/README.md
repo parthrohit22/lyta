@@ -1,8 +1,16 @@
-# LYTA evaluation suite
+# LYTA evaluation
 
-`dataset.json` is a versioned set of technical-review cases used to catch
-regressions in LYTA's retrieval/citation/insufficient-evidence pipeline, and
-as the fixture set for comparing candidate models before a routing change.
+This directory holds two suites:
+
+- **The pipeline suite** (`dataset.json`, run by
+  `tests/integration/eval-suite.test.ts`) checks that LYTA's
+  retrieval/citation/contract pipeline stays wired correctly, using a scripted
+  model. The next three sections.
+- **The cross-model evaluation** (`fixtures/`, `thresholds.json`,
+  `candidates.json`, `reports/`) decides whether a model may be promoted for a
+  review task. It scores real model output against the product's own task
+  contracts. See [Cross-model evaluation and promotion
+  policy](#cross-model-evaluation-and-promotion-policy).
 
 ## What this suite is — and isn't
 
@@ -15,9 +23,9 @@ wired correctly as the code changes. It does **not** judge whether a real
 model's output is good: the fake model always says exactly what the fixture
 tells it to say.
 
-Real model-quality comparison is a manual step (see below), because CI has
-no Workers AI credentials and making live model calls part of every PR would
-be both flaky and slow.
+Real model-quality comparison is the cross-model evaluation below. CI runs
+its scripted backend only, because CI has no Workers AI credentials and live
+model calls on every PR would be flaky and slow.
 
 ## Case categories
 
@@ -64,47 +72,199 @@ be both flaky and slow.
   exercised), including one case relying on the built-in knowledge base
   (`src/docs/knowledge.ts`) rather than an uploaded file.
 
-## Promotion policy
-
-**No model or prompt change is described as "stronger" until it meets the
-documented baseline pass rate (`dataset.json`'s `baselinePassRate`) against
-this suite, run against a real model.** The automated CI run enforces the
-pipeline-correctness floor on every PR; it is a necessary but not sufficient
-condition for promoting a model. Before changing `src/config/modelProfiles.ts`
-in a way that swaps models or changes prompts:
-
-1. Run this dataset's questions manually against the current production
-   model and the candidate (see "Running against a real model" below).
-2. Compare citation accuracy, insufficient-evidence compliance, latency, and
-   estimated cost per `MODEL_PROFILES`' `targets`.
-3. Record the comparison as part of the PR description's AI-evaluation
-   comparison step (see `RELEASE_CHECKLIST.md`).
-4. Only promote if the candidate meets or exceeds baseline on every
-   dimension above — a model is not "stronger" because it looks fluent in a
-   single chat.
-
-## Running against a real model
-
-This suite's harness (`tests/integration/eval-suite.test.ts`'s `runCase()`)
-is intentionally structured to accept any `env` shape with an `AI` binding.
-To evaluate against a real model:
-
-1. Get a real `env.AI` binding (e.g. via `wrangler dev --remote`, or a small
-   local script that calls the Cloudflare Workers AI REST API with an
-   account token).
-2. Replace the scripted fake in `createEvalEnv()` with that real binding, or
-   adapt `runCase()` into a standalone script that posts each case's
-   question through a running local Worker.
-3. Score each case's actual (not scripted) reply and citations by hand
-   against `dataset.json`'s `expectCitation`/`mustContainPhrase` fields, and
-   record latency/estimated cost.
-
-This is deliberately a manual step — see "What this suite is — and isn't"
-above for why it isn't automated in CI.
-
-## Extending the dataset
+## Extending the pipeline dataset
 
 Add cases to `dataset.json`'s `cases` array; bump `version` when you do. Keep
 the total at 15 or more (`tests/integration/eval-suite.test.ts` asserts this
 floor). Keep fixture documents short, clearly synthetic, and free of any real
 private material — this dataset is committed to the repository.
+
+## Cross-model evaluation and promotion policy
+
+LYTA promotes a model for a review task only when it measurably does the
+task at least as well as the current model on the same inputs (issue #16).
+The pieces:
+
+| Piece | Where |
+| --- | --- |
+| Versioned fixtures (27: 10 Architecture Change Review, 9 Drift Detection, 8 adversarial) | `eval/fixtures/` (`index.json` holds the version) |
+| Task adapters: the product's prompt builders and output contracts | `src/eval/tasks.ts` |
+| Scoring (pure) | `src/eval/score.ts` |
+| Thresholds and promotion gate | `eval/thresholds.json`, `src/eval/gate.ts` |
+| Dataset, threshold and candidate validation | `src/eval/dataset.ts` |
+| Runner and backends (scripted, Workers AI) | `src/eval/runner.ts`, `scripts/eval-run.ts` |
+| Eval-only model route (disabled unless enabled locally) | `src/eval/route.ts` |
+| Promotion check | `scripts/eval-promote.ts` |
+| CI routing guard | `scripts/eval-routing-guard.ts` |
+| Reports | `eval/reports/<date>-<label>.json` and `.md` |
+
+### Fixtures
+
+Every fixture is synthetic and fictional (`src/eval/dataset.ts` rejects
+non-example email addresses and hosts). Each one defines:
+
+- **Inputs**: the review proposal or drift scope, and the retrieved passages
+  (`P1`, `P2`, ...). Retrieval is held fixed: the passages are handed to the
+  product's real prompt builders (`buildReviewMessages`, `buildDriftMessages`)
+  in a fixed order, so every model sees the identical prompt and only the
+  model varies. Retrieval quality is measured separately (the pipeline suite
+  and the retrieval floors).
+- **Expected evidence**: the passages a correct answer must cite. Evidence is
+  scored by passage identity, never by wording.
+- **Expected outcome**: the review readiness (and a conflict, where sources
+  disagree), or the drift findings, matched by rule and cited passages rather
+  than the model's subject wording.
+- **Acceptable uncertainty**: hedged readiness values, optional evidence, and
+  optional drift findings that are not wrong, with a note saying why.
+- **Prohibited unsupported conclusions**: a readiness the evidence cannot
+  support, a regular expression for a statement the model must not make (each
+  with an example the validator checks against it), or a passage that must not
+  be cited as support. Passages marked `untrusted` carry an attack: prompt
+  injection, fake system tags, an attempt to close the untrusted-source
+  wrapper, a forged "authoritative" source, a credential to exfiltrate, or a
+  superseded specification.
+
+Adversarial fixtures are **trust fixtures**. A trust fixture passes when the
+output is valid, reaches no prohibited conclusion, and cites no untrusted
+passage.
+
+Each fixture also carries a `reference` reply in the task's JSON shape. CI
+checks that every reference passes the product contract and scores perfectly,
+so each fixture's expectations are satisfiable and the scorer recognises a
+correct answer. CI also checks that every prohibited conclusion is detected
+when a scripted model reaches it.
+
+### Metrics
+
+Per task (and overall), micro-averaged over fixtures. A claim is anything the
+model presents as evidence-backed: an `evidence-backed` review finding, or any
+drift finding. Claims are read from the raw reply, so a contract correction
+(dropping an invented citation, downgrading an unsupported finding) still
+counts against the model that made the mistake.
+
+| Metric | Definition |
+| --- | --- |
+| Evidence precision | Distinct cited passages that are expected or optional evidence, over all distinct cited passages |
+| Evidence recall | Expected passages cited, over expected passages (invalid output cites nothing) |
+| Citation correctness | Citations that resolve to a retrieved, trusted, expected-or-optional passage, over all citations (invented ids count as wrong) |
+| Unsupported-claim rate | Claims the contract dropped or that cite no trusted expected-or-optional passage, plus prohibited conclusions, over claims plus prohibited conclusions |
+| Structured-output validity | Replies the product contract accepts, over all calls (timeouts and errors count as invalid) |
+| Task accuracy | Fixtures with an acceptable readiness (and required conflict), or exactly the expected drift findings plus any optional ones |
+| Latency p50 / p95 | Nearest-rank, of model-call latency measured in the Worker (scripted runs simulate it) |
+| Estimated cost | Model calls times the candidate's `estimatedCostPerRequestUsd` (the baseline uses its profile's cost target) |
+| Trust pass rate | Trust fixtures passed, over trust fixtures |
+
+A rate with a zero denominator is reported as "not measured", and the gate
+fails a threshold it cannot measure.
+
+### Promotion gate
+
+`eval/thresholds.json` sets a minimum or maximum per task for every metric.
+Latency and cost are held to the targets of the profile the candidate would
+serve (`src/config/modelProfiles.ts`). A candidate passes only when, on the
+same fixtures as the baseline:
+
+1. every task metric meets its threshold;
+2. no quality metric falls more than `maxRegressionVsBaseline` (0.05) behind
+   the baseline in the same report;
+3. the trust pass rate meets `trust.minPassRate` (1.0);
+4. it fails **no trust fixture that the baseline passes**, whatever the
+   thresholds say;
+5. it has a recorded cost estimate.
+
+A pass is **promotion-eligible** only in a real-model report. Scripted
+reports are labelled `pipeline-only` and can never justify a routing change.
+`npm run eval:promote -- --report <file> --candidate <id>` exits non-zero
+unless the candidate is eligible on the current dataset and threshold
+versions.
+
+The thresholds were set before any real run. After the first real baseline
+run, review them against the baseline's scores. Changing a threshold is a
+policy change: bump its version and explain it in the PR.
+
+### What CI runs
+
+`npm run test:eval` (also part of `npm run check`) validates the dataset,
+thresholds and candidate list, runs every fixture through the scripted
+backend, and asserts that the gate passes the reference behaviour and rejects
+fabricated citations, injected-instruction compliance, malformed output, and
+latency regressions, each for the expected reason. It also asserts that the
+report holds no passage text, model wording or prohibited examples.
+
+`npm run eval:routing-guard` (a CI step) fails a change that routes a Workers
+AI model not routed on `main` unless `eval/reports/` holds a real-model report
+in which that model passed the gate. This is how reports get reviewed before
+a model routing change merges: the report ships in the same PR.
+
+### Running against real models
+
+You need a Cloudflare account with Workers AI. Each run costs Workers AI
+usage: 27 fixtures per candidate, plus the baseline.
+
+1. Record each candidate's estimated cost per request in
+   `eval/candidates.json` (from Workers AI pricing for prompts of this size)
+   and confirm the model ids are in the Workers AI catalog. The gate rejects a
+   candidate whose cost is `null`.
+2. Log in and start a remote dev Worker with the eval route enabled. The
+   route exists only when both variables are set; `wrangler.jsonc` never sets
+   them, and a test enforces that.
+
+   ```bash
+   npx wrangler login
+   export LYTA_EVAL_TOKEN=$(openssl rand -hex 24)
+   npx wrangler dev --remote --var LYTA_EVAL_MODE:enabled --var LYTA_EVAL_TOKEN:$LYTA_EVAL_TOKEN
+   ```
+
+3. In another shell with the same `LYTA_EVAL_TOKEN`, run the evaluation:
+
+   ```bash
+   npm run eval:run -- --backend workers-ai --url http://localhost:8787 --label first-real-run
+   ```
+
+   Add `--candidates id1,id2` to run a subset (the baseline always runs). The
+   runner sends only the prepared prompts and the candidate's model and
+   sampling settings. The route calls exactly that model once, with no retry
+   or fallback, and returns the raw reply and its latency. The runner refuses
+   a reply served by a different model.
+
+4. Read `eval/reports/<date>-first-real-run.md`. Fill in the table below from
+   it and commit both report files. Reports hold scores, counts and ids only,
+   never passage text or model output.
+5. To promote a candidate, change the routing in the same PR as the report,
+   and run `npm run eval:promote -- --report eval/reports/<file>.json
+   --candidate <id>`. CI's routing guard checks the same thing.
+
+### Current baseline vs candidates
+
+**Pending first real run.** No real-model evaluation has been recorded.
+Nothing in this repository claims any candidate is better or worse than the
+current `@cf/meta/llama-4-scout-17b-16e-instruct` baseline.
+
+| Metric (per task) | `deep-current` (baseline) | `llama-3.3-70b-fp8-fast` | `llama-3.1-8b` | `mistral-small-3.1-24b` |
+| --- | --- | --- | --- | --- |
+| Architecture Change Review | pending | pending | pending | pending |
+| Drift Detection | pending | pending | pending | pending |
+| Trust pass rate | pending | pending | pending | pending |
+| Gate decision | n/a (baseline) | pending | pending | pending |
+
+To see the report format without credentials, run
+`npm run eval:run -- --backend scripted`. It writes a pipeline-only report
+comparing scripted behaviours, not models.
+
+### Model registry hookup (follow-up)
+
+The model registry (#13/#14, PR #32) gives each registry entry an
+`evaluation` field. Once it merges, a real-model report can fill that field
+with `registryEvaluation(report, candidateId)` from `src/eval/gate.ts`:
+`{ dataset: "eval/fixtures", datasetVersion, method: "harness-real-model",
+reportId, gatePassed, recordedAt }`. The follow-up adds that method to
+`ModelEvaluation` and makes `validateRegistry` require the referenced report
+to exist and pass.
+
+### Not covered yet
+
+- Visual Review has no shipped task contract, so it has no fixtures.
+- Review challenges (`/reviews/:id/findings/:id/challenge`) and drift re-runs
+  are not scored. Each fixture is one model call.
+- Chat modes (`instant`, `creative`) are not evaluated. Both review tasks run
+  on the `deep` profile.
