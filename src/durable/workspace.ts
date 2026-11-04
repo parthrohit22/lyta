@@ -18,6 +18,19 @@ import {
   type FindingDisposition,
   type ReviewEvidence
 } from "../review/contract"
+import {
+  DRIFT_ROLES,
+  applyDriftDisposition,
+  diffDriftRuns,
+  summarizeDriftRun,
+  type DriftComparison,
+  type DriftComparisonType,
+  type DriftDisposition,
+  type DriftRole,
+  type DriftRuleId,
+  type DriftRun,
+  type DriftSource
+} from "../drift/contract"
 
 interface WorkspaceProfile {
   name: string
@@ -84,6 +97,8 @@ const MAX_ARTIFACT_BYTES = 2_400_000
 const MAX_WORKSPACE_ARTIFACT_BYTES = 12_000_000
 const LIBRARY_PAGE_SIZE = 20
 const MAX_REVIEWS = 50
+const MAX_DRIFT_COMPARISONS = 30
+const MAX_DRIFT_RUNS = 25
 
 export class Workspace {
   state: DurableObjectState
@@ -192,6 +207,26 @@ export class Workspace {
 
     if (path === "/reviews/challenge" && request.method === "POST") {
       return this.queue(() => this.recordChallenge(request))
+    }
+
+    if (path === "/drift" && request.method === "GET") {
+      return this.listDriftComparisons()
+    }
+
+    if (path === "/drift/get" && request.method === "POST") {
+      return this.getDriftComparison(request)
+    }
+
+    if (path === "/drift/sources" && request.method === "POST") {
+      return this.resolveDriftSources(request)
+    }
+
+    if (path === "/drift/runs/save" && request.method === "POST") {
+      return this.queue(() => this.saveDriftRun(request))
+    }
+
+    if (path === "/drift/disposition" && request.method === "POST") {
+      return this.queue(() => this.setDriftDisposition(request))
     }
 
     return new Response("Not Found", { status: 404 })
@@ -592,8 +627,9 @@ export class Workspace {
     )
 
     const affectedReviews = await this.removeReviewEvidence(body.id)
+    const affectedDriftRuns = await this.removeDriftEvidence(body.id)
 
-    return Response.json({ ok: true, deletionImpact: { ...deletionImpact, affectedReviews } })
+    return Response.json({ ok: true, deletionImpact: { ...deletionImpact, affectedReviews, affectedDriftRuns } })
   }
 
   private async workspaceScope() {
@@ -1067,6 +1103,247 @@ export class Workspace {
     }
 
     return affected
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* drift comparisons                                                   */
+  /* ------------------------------------------------------------------ */
+
+  // Each comparison and each run is stored under its own key, so a long run
+  // history never pushes one storage value past its size limit. Runs are
+  // written once and never rewritten, except that deleting a library source
+  // clears its excerpts (as it does for reviews).
+
+  private async listDriftComparisons() {
+    const comparisons = await this.loadDriftComparisons()
+
+    return Response.json({
+      comparisons: comparisons.map((comparison) => ({
+        id: comparison.id,
+        type: comparison.type,
+        title: normalizeText(comparison.scope, 90),
+        runCount: comparison.runs.length,
+        latestRun: comparison.runs[comparison.runs.length - 1] || null,
+        createdAt: comparison.createdAt,
+        updatedAt: comparison.updatedAt
+      }))
+    })
+  }
+
+  private async getDriftComparison(request: Request) {
+    const body = (await request.json()) as { id?: string; runId?: string }
+    const comparison = await this.state.storage.get<DriftComparison>(`driftComparison:${normalizeText(body.id, 120)}`)
+
+    if (!comparison) {
+      return new Response("Drift comparison not found", { status: 404 })
+    }
+
+    const runId = normalizeText(body.runId, 120) || comparison.runs[comparison.runs.length - 1]?.id
+    const run = comparison.runs.some((summary) => summary.id === runId)
+      ? await this.state.storage.get<DriftRun>(`driftRun:${runId}`)
+      : undefined
+
+    if (!run) {
+      return new Response("Drift run not found", { status: 404 })
+    }
+
+    return Response.json({ comparison, run })
+  }
+
+  /**
+   * Resolves the role selection against this workspace's library and stamps
+   * each source with its version and import date. A selected file is
+   * "superseded" when a newer library file has the same name and is not
+   * itself part of the comparison.
+   */
+  private async resolveDriftSources(request: Request) {
+    const body = (await request.json()) as { sources?: Partial<Record<DriftRole, string[]>> }
+    const library = await this.loadLibrary()
+    const selectedIds = new Set(DRIFT_ROLES.flatMap((role) => uniqueIds(body.sources?.[role], 6)))
+    const sources: DriftSource[] = []
+    const unavailableSourceFileIds: string[] = []
+
+    for (const role of DRIFT_ROLES) {
+      for (const fileId of uniqueIds(body.sources?.[role], 6)) {
+        const file = library.find((candidate) => candidate.id === fileId)
+
+        if (!file) {
+          unavailableSourceFileIds.push(fileId)
+          continue
+        }
+
+        // Latest import wins; ties keep library order, which is newest first.
+        const newest = library
+          .filter((candidate) => candidate.attachment.name === file.attachment.name)
+          .reduce((latest, candidate) => (candidate.createdAt > latest.createdAt ? candidate : latest))
+        const supersededBy =
+          newest.id !== file.id && !selectedIds.has(newest.id)
+            ? { fileId: newest.id, sourceVersionId: newest.sourceVersionId, importedAt: newest.createdAt }
+            : null
+
+        sources.push({
+          role,
+          fileId: file.id,
+          fileName: file.attachment.name,
+          sourceVersionId: file.sourceVersionId,
+          importedAt: file.createdAt,
+          updatedAt: file.updatedAt,
+          supersededBy
+        })
+      }
+    }
+
+    return Response.json({ sources, unavailableSourceFileIds })
+  }
+
+  /**
+   * Stores a validated run. The diff is computed here, under the queue, against
+   * whatever run is latest at save time, so concurrent re-runs still chain.
+   */
+  private async saveDriftRun(request: Request) {
+    const body = (await request.json()) as {
+      comparisonId?: string | null
+      comparison?: { type: DriftComparisonType; scope: string; rules: DriftRuleId[] }
+      run?: Omit<DriftRun, "id" | "comparisonId" | "number" | "diff" | "createdAt">
+    }
+
+    if (!body.run || !Array.isArray(body.run.findings) || !body.comparison) {
+      return new Response("Invalid drift run", { status: 400 })
+    }
+
+    const now = new Date().toISOString()
+    const existingId = normalizeText(body.comparisonId, 120)
+    let comparison: DriftComparison | undefined
+
+    if (existingId) {
+      comparison = await this.state.storage.get<DriftComparison>(`driftComparison:${existingId}`)
+
+      if (!comparison) {
+        return new Response("Drift comparison not found", { status: 404 })
+      }
+
+      if (comparison.runs.length >= MAX_DRIFT_RUNS) {
+        return new Response(
+          `This comparison already has ${MAX_DRIFT_RUNS} runs. Start a new comparison so earlier run history is kept intact.`,
+          { status: 409 }
+        )
+      }
+    } else {
+      comparison = {
+        id: createId("drift"),
+        type: body.comparison.type,
+        scope: body.comparison.scope,
+        rules: body.comparison.rules,
+        createdAt: now,
+        updatedAt: now,
+        runs: [],
+        dispositions: {}
+      }
+    }
+
+    const latest = comparison.runs[comparison.runs.length - 1]
+    const previous = latest ? (await this.state.storage.get<DriftRun>(`driftRun:${latest.id}`)) || null : null
+    const { findings, diff } = diffDriftRuns(previous, body.run.findings)
+    const run: DriftRun = {
+      ...body.run,
+      id: createId("drift-run"),
+      comparisonId: comparison.id,
+      number: comparison.runs.length + 1,
+      findings,
+      diff,
+      createdAt: now
+    }
+
+    comparison.runs = [...comparison.runs, summarizeDriftRun(run)]
+    comparison.updatedAt = now
+
+    await this.state.storage.put(`driftRun:${run.id}`, run)
+    await this.state.storage.put(`driftComparison:${comparison.id}`, comparison)
+
+    if (!existingId) {
+      const ids = (await this.state.storage.get<string[]>("driftComparisonIds")) || []
+      const next = [comparison.id, ...ids]
+      // The oldest comparisons are evicted whole, with all of their runs.
+      for (const evictedId of next.slice(MAX_DRIFT_COMPARISONS)) {
+        const evicted = await this.state.storage.get<DriftComparison>(`driftComparison:${evictedId}`)
+        await this.state.storage.delete([
+          `driftComparison:${evictedId}`,
+          ...(evicted?.runs || []).map((summary) => `driftRun:${summary.id}`)
+        ])
+      }
+      await this.state.storage.put("driftComparisonIds", next.slice(0, MAX_DRIFT_COMPARISONS))
+    }
+
+    return Response.json({ comparison, run })
+  }
+
+  /** Dispositions belong to the comparison, keyed by stable finding key, so every later run shows them. */
+  private async setDriftDisposition(request: Request) {
+    const body = (await request.json()) as {
+      id?: string
+      runId?: string
+      findingKey?: string
+      disposition?: DriftDisposition
+      note?: string
+    }
+    const comparison = await this.state.storage.get<DriftComparison>(`driftComparison:${normalizeText(body.id, 120)}`)
+    const runId = normalizeText(body.runId, 120)
+    const run = comparison?.runs.some((summary) => summary.id === runId)
+      ? await this.state.storage.get<DriftRun>(`driftRun:${runId}`)
+      : undefined
+    const key = normalizeText(body.findingKey, 200)
+
+    if (!comparison || !run || !body.disposition) {
+      return new Response("Drift run not found", { status: 404 })
+    }
+
+    if (!run.findings.some((finding) => finding.key === key) && !run.diff.resolved.some((item) => item.key === key)) {
+      return new Response("That finding is not part of this run", { status: 404 })
+    }
+
+    const disposition = applyDriftDisposition(comparison, key, {
+      disposition: body.disposition,
+      note: normalizeTextBlock(body.note, 500),
+      runId: run.id,
+      at: new Date().toISOString()
+    })
+
+    await this.state.storage.put(`driftComparison:${comparison.id}`, comparison)
+
+    return Response.json({ comparison, run, disposition })
+  }
+
+  private async removeDriftEvidence(fileId: string) {
+    let affected = 0
+
+    for (const comparison of await this.loadDriftComparisons()) {
+      for (const summary of comparison.runs) {
+        const run = await this.state.storage.get<DriftRun>(`driftRun:${summary.id}`)
+        const deleted = run?.evidence.filter((item) => item.fileId === fileId) || []
+        if (!run || !deleted.length) continue
+
+        affected += 1
+        for (const item of deleted) {
+          item.sourceDeleted = true
+          item.snippet = ""
+        }
+        await this.state.storage.put(`driftRun:${run.id}`, run)
+      }
+    }
+
+    return affected
+  }
+
+  private async loadDriftComparisons() {
+    const ids = (await this.state.storage.get<string[]>("driftComparisonIds")) || []
+    const comparisons: DriftComparison[] = []
+
+    for (const id of ids) {
+      const comparison = await this.state.storage.get<DriftComparison>(`driftComparison:${id}`)
+      if (comparison) comparisons.push(comparison)
+    }
+
+    return comparisons
   }
 
   private async loadReviews() {
