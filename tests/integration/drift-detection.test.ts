@@ -73,7 +73,7 @@ function refFor(messages: Messages, needle: string) {
   return match ? match[1] : "E404"
 }
 
-function createDriftEnv(script: { reply: Reply }) {
+function createDriftEnv(script: { reply: Reply }, options: { unlimited?: boolean } = {}) {
   const env = {} as Env
   const modelCalls: Messages[] = []
 
@@ -98,7 +98,9 @@ function createDriftEnv(script: { reply: Reply }) {
     AUTH_DIRECTORY: createFakeNamespace(() => new AuthDirectory(createDurableState())),
     WORKSPACE: createFakeNamespace(() => new Workspace(createDurableState(), env)),
     CONVERSATION: createFakeNamespace(() => new Conversation(createDurableState(), env)),
-    RATE_LIMITER: createFakeNamespace(() => new RateLimiter(createDurableState())),
+    RATE_LIMITER: options.unlimited
+      ? createFakeNamespace(() => ({ fetch: async () => Response.json({ allowed: true, remaining: 1, retryAfter: 0 }) }))
+      : createFakeNamespace(() => new RateLimiter(createDurableState())),
     SESSION_INDEX: createFakeNamespace(() => ({ fetch: async () => new Response("Not Found", { status: 404 }) }))
   } satisfies Omit<Env, never>)
 
@@ -602,6 +604,26 @@ test("dispositions are kept by finding key across runs and keep their history", 
   const markdown = await (await client(`/drift/${comparisonId}/runs/${second.body.run!.id}/export`)).text()
   assert.match(markdown, /- Disposition: Accepted deviation — Search ships in Q3\./)
   assert.match(markdown, /### D3-1 · session TTL \(unchanged\)[\s\S]*?- Disposition: Confirmed/)
+})
+
+test("a comparison refuses a run past its cap instead of dropping earlier history", async () => {
+  // Rate limits would stop this test first; it is about the run cap.
+  const { env, modelCalls } = createDriftEnv({ reply: v1Reply }, { unlimited: true })
+  const client = await signIn(env, "cap@drift.test")
+  const first = await startDrift(client, await importLanternfish(client))
+  const comparisonId = first.body.comparison!.id
+
+  for (let run = 2; run <= 25; run++) {
+    assert.equal((await rerun(client, comparisonId)).response.status, 201, `run ${run}`)
+  }
+  const calls = modelCalls.length
+  const refused = await rerun(client, comparisonId)
+  assert.equal(refused.response.status, 409)
+  assert.match(refused.body.error || "", /already has 25 runs\. Start a new comparison/)
+  assert.equal(modelCalls.length, calls, "no model call is spent on a run that cannot be saved")
+
+  const stored = (await (await client(`/drift/${comparisonId}/runs/${first.body.run!.id}`)).json()) as RunResponse
+  assert.deepEqual(stored.run, first.body.run, "run 1 is still stored as it was")
 })
 
 test("unsupported comparison types, roles, and rules are rejected with a clear error", async () => {

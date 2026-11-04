@@ -106,6 +106,9 @@ export const DRIFT_COMPARISONS: Record<DriftComparisonType, { roles: DriftRole[]
   "spec-architecture-implementation": { roles: [...DRIFT_ROLES], rules: [...DRIFT_RULES] }
 }
 
+/** A comparison refuses further runs at this count rather than dropping earlier history. */
+export const MAX_DRIFT_RUNS = 25
+
 const MAX_SCOPE_LENGTH = 1200
 const MAX_SOURCES_PER_ROLE = 6
 const MAX_FINDINGS = 12

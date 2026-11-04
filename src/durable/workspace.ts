@@ -20,6 +20,7 @@ import {
 } from "../review/contract"
 import {
   DRIFT_ROLES,
+  MAX_DRIFT_RUNS,
   applyDriftDisposition,
   diffDriftRuns,
   summarizeDriftRun,
@@ -98,7 +99,6 @@ const MAX_WORKSPACE_ARTIFACT_BYTES = 12_000_000
 const LIBRARY_PAGE_SIZE = 20
 const MAX_REVIEWS = 50
 const MAX_DRIFT_COMPARISONS = 30
-const MAX_DRIFT_RUNS = 25
 
 export class Workspace {
   state: DurableObjectState

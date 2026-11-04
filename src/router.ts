@@ -38,6 +38,7 @@ import {
   DRIFT_COMPARISONS,
   DRIFT_POLICY_VERSION,
   DRIFT_RULE_DEFINITIONS,
+  MAX_DRIFT_RUNS,
   buildDriftCoverage,
   buildDriftQuery,
   buildSourceCheckFindings,
@@ -926,6 +927,15 @@ async function handleDriftRun(request: Request, env: Env, workspace: DurableObje
     }
 
     const { comparison, run } = (await stored.json()) as { comparison: DriftComparison; run: DriftRun }
+
+    // Checked again when saving; refusing here avoids spending a model call on a run that cannot be stored.
+    if (comparison.runs.length >= MAX_DRIFT_RUNS) {
+      return driftError(
+        `This comparison already has ${MAX_DRIFT_RUNS} runs. Start a new comparison so earlier run history is kept intact.`,
+        409
+      )
+    }
+
     const sources = validateDriftSources(body?.sources ?? selectionOf(run.sources), comparison.type)
 
     if (!sources.ok) {
