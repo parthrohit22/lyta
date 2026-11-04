@@ -4,6 +4,7 @@ import { SessionIndex } from "./durable/sessionIndex"
 import { AuthDirectory } from "./durable/authDirectory"
 import { Workspace } from "./durable/workspace"
 import { RateLimiter } from "./durable/rateLimiter"
+import { handleEvalRequest } from "./eval/route"
 
 export interface WorkersAI {
   run(model: string, input: unknown): Promise<unknown>
@@ -17,11 +18,14 @@ export interface Env {
   WORKSPACE: DurableObjectNamespace
   ARTIFACTS: R2Bucket
   RATE_LIMITER: DurableObjectNamespace
+  /** Local model evaluation only (eval/README.md). Never set in wrangler.jsonc or production. */
+  LYTA_EVAL_MODE?: string
+  LYTA_EVAL_TOKEN?: string
 }
 
 export default {
-  fetch(request: Request, env: Env) {
-    return router(request, env)
+  async fetch(request: Request, env: Env) {
+    return (await handleEvalRequest(request, env)) || router(request, env)
   }
 }
 

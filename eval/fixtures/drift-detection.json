@@ -1,0 +1,448 @@
+{
+  "synthetic": "Every system, team, document and value here is fictional and written for this evaluation.",
+  "fixtures": [
+    {
+      "id": "drift-session-ttl-contradiction",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Interface contradiction: idle TTL",
+      "input": { "scope": "Session expiry" },
+      "passages": [
+        { "id": "P1", "file": "brindle-prd.md", "role": "specification", "text": "Sessions expire after 30 minutes of inactivity." },
+        {
+          "id": "P2",
+          "file": "brindle-architecture.md",
+          "role": "architecture",
+          "text": "The session service stores sessions in the edge cache with a 30 minute idle TTL."
+        },
+        { "id": "P3", "file": "brindle-session-config.md", "role": "implementation", "text": "session.idle_ttl_seconds = 43200  # 12 hours" }
+      ],
+      "expected": {
+        "evidence": ["P1", "P3"],
+        "findings": [{ "rule": "interface-contradiction", "claim": ["P1", "P2"], "counterpart": ["P3"] }]
+      },
+      "acceptableUncertainty": {
+        "note": "Anchoring the contradiction on the architecture instead of the PRD, or reporting both, is acceptable.",
+        "optionalEvidence": ["P2"],
+        "optionalFindings": [{ "rule": "interface-contradiction", "claim": ["P2"], "counterpart": ["P3"] }]
+      },
+      "prohibited": [
+        {
+          "id": "claims-consistent",
+          "kind": "statement",
+          "pattern": "(consistent|agree) (across|between) (all )?(roles|sources|documents)",
+          "example": "Session expiry is consistent across all roles.",
+          "reason": "The config sets 12 hours, not 30 minutes."
+        }
+      ],
+      "reference": {
+        "summary": "The implementation's 12 hour idle TTL contradicts the 30 minute expiry in the PRD and architecture.",
+        "findings": [
+          {
+            "rule": "interface-contradiction",
+            "subject": "session idle TTL",
+            "claim": "Sessions expire after 30 minutes of inactivity.",
+            "counterpart": "The session config sets a 12 hour idle TTL.",
+            "detail": "Sessions stay valid 24 times longer than specified.",
+            "confidence": "high",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": ["@P3"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-csv-export-unsupported",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Requirement without support: CSV export",
+      "input": { "scope": "Report export formats" },
+      "passages": [
+        { "id": "P1", "file": "ledgerlark-prd.md", "role": "specification", "text": "Finance users can export any report as CSV." },
+        {
+          "id": "P2",
+          "file": "ledgerlark-architecture.md",
+          "role": "architecture",
+          "text": "The reporting service renders reports as JSON for the web client and as PDF for scheduled email."
+        },
+        {
+          "id": "P3",
+          "file": "ledgerlark-report-handlers.md",
+          "role": "implementation",
+          "text": "GET /reports/:id returns JSON. GET /reports/:id/pdf streams a PDF."
+        }
+      ],
+      "expected": { "evidence": ["P1"], "findings": [{ "rule": "requirement-without-support", "claim": ["P1"] }] },
+      "acceptableUncertainty": {
+        "note": "Mentioning the JSON and PDF passages in the explanation is fine; the finding cites only the requirement.",
+        "optionalEvidence": ["P2", "P3"]
+      },
+      "prohibited": [
+        {
+          "id": "claims-project-absence",
+          "kind": "statement",
+          "pattern": "CSV export (is not|isn't|was never|has not been) (implemented|built)|CSV export does not exist",
+          "example": "CSV export is not implemented.",
+          "reason": "Only the supplied evidence was searched; LYTA cannot know what the project lacks."
+        }
+      ],
+      "reference": {
+        "summary": "The CSV export requirement has no support in the supplied architecture or implementation evidence, which cover JSON and PDF.",
+        "findings": [
+          {
+            "rule": "requirement-without-support",
+            "subject": "CSV report export",
+            "claim": "Finance users can export any report as CSV.",
+            "detail": "Not found in the supplied architecture or implementation passages, which describe JSON and PDF output.",
+            "confidence": "medium",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-audit-writer-component",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Component without implementation: audit-log writer",
+      "input": { "scope": "Account change auditing" },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "ledgerlark-architecture.md",
+          "role": "architecture",
+          "text": "Component: audit-log writer. Consumes account.changed events and appends signed entries to the audit store."
+        },
+        {
+          "id": "P2",
+          "file": "accounts-handlers.md",
+          "role": "implementation",
+          "text": "services/accounts/handlers.ts publishes account.changed after every profile or role update."
+        },
+        {
+          "id": "P3",
+          "file": "notifications-worker.md",
+          "role": "implementation",
+          "text": "services/notifications/worker.ts consumes account.changed and sends a confirmation email."
+        }
+      ],
+      "expected": { "evidence": ["P1"], "findings": [{ "rule": "component-without-implementation", "claim": ["P1"] }] },
+      "acceptableUncertainty": {
+        "note": "Medium or low confidence is acceptable for an absence finding.",
+        "optionalEvidence": ["P2", "P3"]
+      },
+      "prohibited": [
+        {
+          "id": "claims-writer-missing-from-project",
+          "kind": "statement",
+          "pattern": "audit(-log)? writer (does not exist|is missing from the (codebase|project)|was never built)",
+          "example": "The audit-log writer does not exist.",
+          "reason": "Only the supplied implementation passages were searched."
+        }
+      ],
+      "reference": {
+        "summary": "The architecture's audit-log writer has no matching passage in the supplied implementation evidence.",
+        "findings": [
+          {
+            "rule": "component-without-implementation",
+            "subject": "audit-log writer",
+            "claim": "An audit-log writer consumes account.changed events and appends signed entries to the audit store.",
+            "detail": "The supplied implementation passages publish account.changed and send email, but none appends audit entries.",
+            "confidence": "medium",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": []
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-no-drift",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "No drift: all roles agree",
+      "input": { "scope": "API rate limiting" },
+      "passages": [
+        { "id": "P1", "file": "gatehouse-prd.md", "role": "specification", "text": "API requests are limited to 100 per minute per API key." },
+        {
+          "id": "P2",
+          "file": "gatehouse-architecture.md",
+          "role": "architecture",
+          "text": "The gateway enforces a token bucket of 100 requests per minute per API key."
+        },
+        { "id": "P3", "file": "gatehouse-limits-config.md", "role": "implementation", "text": "rateLimit: { perKey: 100, windowSeconds: 60 }" }
+      ],
+      "expected": { "evidence": [], "findings": [] },
+      "acceptableUncertainty": { "note": "The only correct outcome is no findings." },
+      "prohibited": [
+        {
+          "id": "invents-mismatch",
+          "kind": "statement",
+          "pattern": "rate limit (differs|mismatch|is inconsistent|contradicts)",
+          "example": "The rate limit differs between the gateway and the config.",
+          "reason": "All three roles state 100 per minute per key."
+        }
+      ],
+      "reference": {
+        "summary": "Specification, architecture and implementation agree on 100 requests per minute per API key.",
+        "findings": []
+      }
+    },
+    {
+      "id": "drift-order-status-code",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Interface contradiction: response status",
+      "input": { "scope": "Order creation response" },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "orders-api-spec.md",
+          "role": "specification",
+          "text": "POST /v2/orders returns 201 Created with the new order id in the Location header."
+        },
+        {
+          "id": "P2",
+          "file": "orders-architecture.md",
+          "role": "architecture",
+          "text": "The orders API follows the platform REST conventions: creation endpoints return 201 with a Location header."
+        },
+        { "id": "P3", "file": "orders-create-handler.md", "role": "implementation", "text": "createOrder handler: res.status(200).json({ id })" }
+      ],
+      "expected": {
+        "evidence": ["P1", "P3"],
+        "findings": [{ "rule": "interface-contradiction", "claim": ["P1", "P2"], "counterpart": ["P3"] }]
+      },
+      "acceptableUncertainty": { "note": "Anchoring on the architecture convention instead of the spec is acceptable.", "optionalEvidence": ["P2"] },
+      "prohibited": [
+        {
+          "id": "claims-agreement",
+          "kind": "statement",
+          "pattern": "(spec|specification) and (the )?implementation (agree|match)",
+          "example": "The specification and implementation agree on the status code.",
+          "reason": "The handler returns 200, not 201."
+        }
+      ],
+      "reference": {
+        "summary": "The create handler returns 200 without a Location header, contradicting the specified 201 Created.",
+        "findings": [
+          {
+            "rule": "interface-contradiction",
+            "subject": "order creation status code",
+            "claim": "POST /v2/orders returns 201 Created with a Location header.",
+            "counterpart": "The handler returns 200 with the id in the body.",
+            "detail": "Clients that follow the Location header will not find it.",
+            "confidence": "high",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": ["@P3"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-retention-and-retries",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Two findings: unsupported requirement and a contradiction",
+      "input": { "scope": "Ingest reliability and audit retention" },
+      "passages": [
+        { "id": "P1", "file": "ingest-prd.md", "role": "specification", "text": "Audit records are retained for one year." },
+        {
+          "id": "P2",
+          "file": "ingest-architecture.md",
+          "role": "architecture",
+          "text": "The ingest worker retries failed writes 3 times with exponential backoff."
+        },
+        { "id": "P3", "file": "ingest-worker-config.md", "role": "implementation", "text": "INGEST_MAX_RETRIES = 5" },
+        {
+          "id": "P4",
+          "file": "storage-lifecycle.md",
+          "role": "implementation",
+          "text": "Storage lifecycle rule: delete objects in the tmp-uploads bucket after 7 days."
+        }
+      ],
+      "expected": {
+        "evidence": ["P1", "P2", "P3"],
+        "findings": [
+          { "rule": "requirement-without-support", "claim": ["P1"] },
+          { "rule": "interface-contradiction", "claim": ["P2"], "counterpart": ["P3"] }
+        ]
+      },
+      "acceptableUncertainty": { "note": "Both findings are required; confidence below high is acceptable for the absence finding." },
+      "prohibited": [
+        {
+          "id": "misattributes-lifecycle-rule",
+          "kind": "statement",
+          "pattern": "audit records are (deleted|removed|purged) after",
+          "example": "Audit records are deleted after 7 days.",
+          "reason": "The lifecycle rule covers the tmp-uploads bucket, not audit records."
+        }
+      ],
+      "reference": {
+        "summary": "Audit retention has no supporting architecture or implementation passage, and the worker's retry count contradicts the architecture.",
+        "findings": [
+          {
+            "rule": "requirement-without-support",
+            "subject": "audit record retention",
+            "claim": "Audit records are retained for one year.",
+            "detail": "No supplied architecture or implementation passage describes audit retention.",
+            "confidence": "medium",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": []
+          },
+          {
+            "rule": "interface-contradiction",
+            "subject": "ingest write retries",
+            "claim": "The ingest worker retries failed writes 3 times.",
+            "counterpart": "The worker config allows 5 retries.",
+            "detail": "Retry load and failure latency differ from the design.",
+            "confidence": "high",
+            "claimCitations": ["@P2"],
+            "counterpartCitations": ["@P3"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-encryption-acceptable",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Acceptable uncertainty: managed encryption outside handler code",
+      "input": { "scope": "Encryption of customer files at rest" },
+      "passages": [
+        { "id": "P1", "file": "vault-prd.md", "role": "specification", "text": "Customer files are encrypted at rest." },
+        {
+          "id": "P2",
+          "file": "vault-architecture.md",
+          "role": "architecture",
+          "text": "File storage uses the provider's managed encryption at rest for all buckets."
+        },
+        {
+          "id": "P3",
+          "file": "vault-upload-handler.md",
+          "role": "implementation",
+          "text": "Upload handler: validates MIME type and size, then writes to the customer-files bucket."
+        }
+      ],
+      "expected": { "evidence": [], "findings": [] },
+      "acceptableUncertainty": {
+        "note": "The architecture supports the requirement. Flagging that implementation passages do not mention encryption is acceptable at medium or low confidence, because managed encryption is configured outside handler code.",
+        "optionalEvidence": ["P2"],
+        "optionalFindings": [{ "rule": "component-without-implementation", "claim": ["P2"] }]
+      },
+      "prohibited": [
+        {
+          "id": "claims-unencrypted",
+          "kind": "statement",
+          "pattern": "files are (stored )?(unencrypted|not encrypted)",
+          "example": "Customer files are stored unencrypted.",
+          "reason": "No passage says files are unencrypted."
+        }
+      ],
+      "reference": {
+        "summary": "The architecture's managed encryption supports the at-rest requirement. Implementation passages do not mention encryption, which is expected when keys are provider-managed.",
+        "findings": []
+      }
+    },
+    {
+      "id": "drift-idempotency-header",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Interface contradiction: header name",
+      "input": { "scope": "Payment request idempotency" },
+      "passages": [
+        {
+          "id": "P1",
+          "file": "payments-prd.md",
+          "role": "specification",
+          "text": "Clients send an Idempotency-Key header on payment requests; the server rejects reused keys with 409."
+        },
+        {
+          "id": "P2",
+          "file": "payments-middleware.md",
+          "role": "implementation",
+          "text": "Payments middleware: reads req.headers['x-request-key'] to deduplicate retries."
+        },
+        {
+          "id": "P3",
+          "file": "payments-architecture.md",
+          "role": "architecture",
+          "text": "The payments API deduplicates retried requests using the Idempotency-Key header."
+        }
+      ],
+      "expected": {
+        "evidence": ["P1", "P2"],
+        "findings": [{ "rule": "interface-contradiction", "claim": ["P1", "P3"], "counterpart": ["P2"] }]
+      },
+      "acceptableUncertainty": { "note": "Anchoring on the architecture is acceptable.", "optionalEvidence": ["P3"] },
+      "prohibited": [
+        {
+          "id": "accepts-wrong-header",
+          "kind": "statement",
+          "pattern": "x-request-key (is|matches) (the )?(specified|documented|required)",
+          "example": "x-request-key is the specified header.",
+          "reason": "The specified header is Idempotency-Key."
+        }
+      ],
+      "reference": {
+        "summary": "The middleware deduplicates on x-request-key, but the specification and architecture use Idempotency-Key.",
+        "findings": [
+          {
+            "rule": "interface-contradiction",
+            "subject": "idempotency header name",
+            "claim": "Clients send an Idempotency-Key header on payment requests.",
+            "counterpart": "The middleware reads x-request-key.",
+            "detail": "Retries sent with Idempotency-Key would not be deduplicated.",
+            "confidence": "high",
+            "claimCitations": ["@P1"],
+            "counterpartCitations": ["@P2"]
+          }
+        ]
+      }
+    },
+    {
+      "id": "drift-empty-implementation-role",
+      "task": "drift-detection",
+      "suite": "core",
+      "trust": false,
+      "title": "Acceptable uncertainty: no implementation evidence supplied",
+      "input": { "scope": "Subscription pausing" },
+      "passages": [
+        { "id": "P1", "file": "billing-prd.md", "role": "specification", "text": "Users can pause a subscription for up to 3 months." },
+        {
+          "id": "P2",
+          "file": "billing-architecture.md",
+          "role": "architecture",
+          "text": "The billing service owns subscription state, including a paused status with a resume date."
+        }
+      ],
+      "expected": { "evidence": [], "findings": [] },
+      "acceptableUncertainty": {
+        "note": "No implementation evidence was supplied, so absence findings are weak. One at low confidence is acceptable, as long as it does not claim the feature is missing from the project.",
+        "optionalEvidence": ["P2"],
+        "optionalFindings": [{ "rule": "component-without-implementation", "claim": ["P2"] }]
+      },
+      "prohibited": [
+        {
+          "id": "claims-pause-missing",
+          "kind": "statement",
+          "pattern": "(pausing|pause) (is not|isn't|was never|has not been) (implemented|built|supported)",
+          "example": "Pausing is not implemented.",
+          "reason": "No implementation sources were supplied, so nothing can be said about the code."
+        }
+      ],
+      "reference": {
+        "summary": "Specification and architecture agree on pausing. No implementation evidence was supplied, so implementation coverage cannot be judged.",
+        "findings": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "version": "2026-11-04.1",
+  "description": "Cross-model evaluation fixtures (issue #16). Bump the version whenever a fixture, expectation or reference reply changes; reports record the version they ran against.",
+  "files": ["architecture-review.json", "drift-detection.json", "adversarial.json"]
+}

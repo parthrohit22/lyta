@@ -1,0 +1,28 @@
+{
+  "version": "2026-11-04.1",
+  "note": "The baseline is always the deep profile's current model (Architecture Change Review and Drift Detection both run on it). Candidates change only the model. Before a real run, check each id against the Workers AI model catalog and record estimatedCostPerRequestUsd from Workers AI pricing for these prompts; the gate rejects a candidate whose cost is null.",
+  "baseline": { "id": "deep-current", "profile": "deep" },
+  "candidates": [
+    {
+      "id": "llama-3.3-70b-fp8-fast",
+      "profile": "deep",
+      "model": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+      "estimatedCostPerRequestUsd": null,
+      "costNote": "Not yet estimated."
+    },
+    {
+      "id": "llama-3.1-8b",
+      "profile": "deep",
+      "model": "@cf/meta/llama-3.1-8b-instruct",
+      "estimatedCostPerRequestUsd": null,
+      "costNote": "Already the deep profile's fallback model; not yet estimated as a primary."
+    },
+    {
+      "id": "mistral-small-3.1-24b",
+      "profile": "deep",
+      "model": "@cf/mistralai/mistral-small-3.1-24b-instruct",
+      "estimatedCostPerRequestUsd": null,
+      "costNote": "Not yet estimated."
+    }
+  ]
+}

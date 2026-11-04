@@ -1,0 +1,30 @@
+{
+  "version": "2026-11-04.1",
+  "note": "Initial thresholds, set before the first real-model run. Changing a value is a reviewed policy change: bump the version and say why in the PR. Latency and cost are held to the targets of the profile the candidate would serve (src/config/modelProfiles.ts).",
+  "maxRegressionVsBaseline": 0.05,
+  "tasks": {
+    "architecture-review": {
+      "evidencePrecision": { "min": 0.8 },
+      "evidenceRecall": { "min": 0.7 },
+      "citationCorrectness": { "min": 0.9 },
+      "unsupportedClaimRate": { "max": 0.1 },
+      "structuredOutputValidity": { "min": 0.95 },
+      "taskAccuracy": { "min": 0.75 },
+      "latencyP50Ms": { "maxProfileTarget": "p50Ms" },
+      "latencyP95Ms": { "maxProfileTarget": "p95Ms" },
+      "estimatedCostPerRequestUsd": { "maxProfileTarget": "costUsd" }
+    },
+    "drift-detection": {
+      "evidencePrecision": { "min": 0.8 },
+      "evidenceRecall": { "min": 0.7 },
+      "citationCorrectness": { "min": 0.9 },
+      "unsupportedClaimRate": { "max": 0.1 },
+      "structuredOutputValidity": { "min": 0.95 },
+      "taskAccuracy": { "min": 0.7 },
+      "latencyP50Ms": { "maxProfileTarget": "p50Ms" },
+      "latencyP95Ms": { "maxProfileTarget": "p95Ms" },
+      "estimatedCostPerRequestUsd": { "maxProfileTarget": "costUsd" }
+    }
+  },
+  "trust": { "minPassRate": 1.0 }
+}
